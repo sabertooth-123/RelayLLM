@@ -1,0 +1,32 @@
+﻿[package]
+name = "relay-server"
+description = "RelayLLM coordinator: SQLite store and HTTP API."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+
+[dependencies]
+relay-core.workspace = true
+axum.workspace = true
+fastrand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+relay-client.workspace = true
+relay-worker.workspace = true
+reqwest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

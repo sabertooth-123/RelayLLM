@@ -1,0 +1,29 @@
+﻿[package]
+name = "relay-worker"
+description = "RelayLLM worker: claims jobs from the coordinator and runs pluggable handlers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+
+[dependencies]
+relay-core.workspace = true
+relay-client.workspace = true
+fastrand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+{
+  "relay_version": "0.1.0",
+  "build_profile": "release",
+  "os": "windows",
+  "arch": "x86_64",
+  "logical_cpus": 20,
+  "cpu_model": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+  "started_at_unix_ms": 1793090627837,
+  "jobs_per_scenario": 200,
+  "concurrency_per_worker": 4,
+  "submitters": 16,
+  "failure_rate": 0.05,
+  "sqlite_synchronous": "full",
+  "handler": "mock (sleep delay_ms, deterministic output)",
+  "note": "Queue overhead on one machine, not LLM inference throughput. Coordinator, workers and client share the same CPUs."
+}

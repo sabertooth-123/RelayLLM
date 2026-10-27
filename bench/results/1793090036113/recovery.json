@@ -1,0 +1,37 @@
+[
+  {
+    "trial": 1,
+    "lease_secs": 2,
+    "detect_ms": 2289,
+    "reclaim_ms": 3078,
+    "complete_ms": 5093
+  },
+  {
+    "trial": 2,
+    "lease_secs": 2,
+    "detect_ms": 2097,
+    "reclaim_ms": 2324,
+    "complete_ms": 4343
+  },
+  {
+    "trial": 3,
+    "lease_secs": 2,
+    "detect_ms": 1459,
+    "reclaim_ms": 1998,
+    "complete_ms": 4011
+  },
+  {
+    "trial": 4,
+    "lease_secs": 2,
+    "detect_ms": 2018,
+    "reclaim_ms": 2105,
+    "complete_ms": 4115
+  },
+  {
+    "trial": 5,
+    "lease_secs": 2,
+    "detect_ms": 1950,
+    "reclaim_ms": 2496,
+    "complete_ms": 4522
+  }
+]

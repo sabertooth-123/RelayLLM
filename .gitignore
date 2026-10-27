@@ -1,0 +1,8 @@
+/target
+*.db
+*.db-shm
+*.db-wal
+.env
+# Benchmark runs keep their summary files; the per-scenario cluster
+# directories (databases and process logs) are large and regenerable.
+/bench/results/*/clusters/

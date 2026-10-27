@@ -1,0 +1,9 @@
+target
+**/*.db
+**/*.db-shm
+**/*.db-wal
+.git
+.github
+# The image's own pinned toolchain is used; rust-toolchain.toml's floating
+# "stable" would make rustup download a different compiler at build time.
+rust-toolchain.toml

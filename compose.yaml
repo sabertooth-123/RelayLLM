@@ -1,0 +1,84 @@
+# One coordinator + three workers on a private Docker network.
+#
+#   docker compose up --build -d
+#   relay --server http://127.0.0.1:7070 submit --prompt "hello"
+#   docker compose logs -f worker
+#   docker compose down        # keeps the database volume
+#   docker compose down -v     # deletes it
+#
+# The coordinator listens on 0.0.0.0 *inside* the network so workers can
+# reach it, but is published only on the host's loopback: RelayLLM has no
+# authentication.
+
+name: relayllm
+
+x-relay: &relay
+  # Every relay service names the build, so Compose never tries to *pull*
+  # relayllm:dev from a registry. Repeat builds are BuildKit cache hits.
+  build: .
+  image: relayllm:dev
+  init: true            # reap zombies, forward signals cleanly
+  restart: unless-stopped
+
+services:
+  coordinator:
+    <<: *relay
+    command: ["coordinator", "--db", "/data/relay.db", "--bind", "0.0.0.0:7070"]
+    environment:
+      RELAY_LEASE_SECS: "${RELAY_LEASE_SECS:-10}"
+      RELAY_REQUEST_TIMEOUT_SECS: "${RELAY_REQUEST_TIMEOUT_SECS:-5}"
+      RELAY_LOG: "${RELAY_LOG:-info}"
+    volumes:
+      - relay-data:/data
+    ports:
+      - "127.0.0.1:${RELAY_PORT:-7070}:7070"
+    # SIGTERM triggers a drain of up to --shutdown-drain-secs (10 s).
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "relay", "--server", "http://127.0.0.1:7070", "health"]
+      interval: 5s
+      timeout: 4s
+      retries: 6
+      start_period: 5s
+
+  worker:
+    <<: *relay
+    command: ["--server", "http://coordinator:7070", "worker", "--concurrency", "2"]
+    environment:
+      RELAY_WORKER_NAME: worker
+      RELAY_MOCK_DELAY_MS: "${RELAY_MOCK_DELAY_MS:-500}"
+      RELAY_LOG: "${RELAY_LOG:-info}"
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    deploy:
+      replicas: 3
+    stop_grace_period: 30s
+
+  # Optional: a worker that also runs `chat` jobs against a local model.
+  #   docker compose --profile ollama up -d
+  #   docker compose exec ollama ollama pull llama3.2:1b
+  # Not exercised by the automated tests (it needs a model download).
+  ollama:
+    image: ollama/ollama:${OLLAMA_TAG:-latest}
+    profiles: ["ollama"]
+    volumes:
+      - ollama-models:/root/.ollama
+
+  worker-chat:
+    <<: *relay
+    profiles: ["ollama"]
+    command: ["--server", "http://coordinator:7070", "worker", "--concurrency", "1"]
+    environment:
+      RELAY_WORKER_NAME: chat
+      RELAY_OPENAI_BASE_URL: http://ollama:11434/v1
+      RELAY_OPENAI_MODEL: "${RELAY_OPENAI_MODEL:-llama3.2:1b}"
+    depends_on:
+      coordinator:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+
+volumes:
+  relay-data:
+  ollama-models:

@@ -1,0 +1,62 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/relay-core",
+    "crates/relay-server",
+    "crates/relay-client",
+    "crates/relay-worker",
+    "crates/relay-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Not yet verified against 1.85 itself; see docs/RELEASE_CHECKLIST.md.
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["Pranav Gupta"]
+keywords = ["queue", "llm", "distributed-systems", "fault-tolerance", "sqlite"]
+categories = ["command-line-utilities", "asynchronous"]
+# Publishing to crates.io is a separate, deliberate step (release checklist).
+# Note: with publish = false, `cargo package --workspace` can't resolve the
+# crates' dependencies on each other; set it to true when packaging.
+publish = false
+
+[workspace.dependencies]
+# Path dependencies carry versions so the crates can be packaged.
+relay-core = { path = "crates/relay-core", version = "0.1.0" }
+relay-server = { path = "crates/relay-server", version = "0.1.0" }
+relay-client = { path = "crates/relay-client", version = "0.1.0" }
+relay-worker = { path = "crates/relay-worker", version = "0.1.0" }
+
+anyhow = "1"
+axum = "0.8"
+clap = { version = "4", features = ["derive", "env"] }
+# Backoff jitter. Tiny, no dependencies.
+fastrand = "2"
+# No TLS backend yet: every endpoint we talk to is a local coordinator.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time", "sync", "fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+
+# Full debug info for every dependency made target/ ~9 GB and filled the
+# disk. Line tables keep backtraces readable for our code; dependencies get none.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"

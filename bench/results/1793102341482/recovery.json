@@ -1,0 +1,37 @@
+[
+  {
+    "trial": 1,
+    "lease_secs": 2,
+    "detect_ms": 2057,
+    "reclaim_ms": 2414,
+    "complete_ms": 4427
+  },
+  {
+    "trial": 2,
+    "lease_secs": 2,
+    "detect_ms": 2288,
+    "reclaim_ms": 2851,
+    "complete_ms": 4862
+  },
+  {
+    "trial": 3,
+    "lease_secs": 2,
+    "detect_ms": 1460,
+    "reclaim_ms": 1777,
+    "complete_ms": 3792
+  },
+  {
+    "trial": 4,
+    "lease_secs": 2,
+    "detect_ms": 2024,
+    "reclaim_ms": 2167,
+    "complete_ms": 4172
+  },
+  {
+    "trial": 5,
+    "lease_secs": 2,
+    "detect_ms": 2111,
+    "reclaim_ms": 2202,
+    "complete_ms": 4209
+  }
+]
