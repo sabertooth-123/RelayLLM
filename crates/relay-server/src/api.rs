@@ -16,9 +16,10 @@ use relay_core::api::{
 use relay_core::job::{Job, JobId};
 use relay_core::submission::SubmissionLimits;
 use tokio::net::TcpListener;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 use tracing::{info, warn};
 
+use crate::dashboard_api;
 use crate::error::ApiError;
 use crate::observe::{HttpMetrics, observe};
 use crate::store::{CancelOutcome, Store, SubmitOutcome};
@@ -56,6 +57,11 @@ pub struct AppState {
     pub(crate) limits: Arc<Limits>,
     pub(crate) lease: Duration,
     pub(crate) http: Arc<HttpMetrics>,
+    /// Registers `/v1/dev/...` routes. Off by default; see `with_dev_controls`.
+    pub(crate) dev_controls: bool,
+    /// Flipped to `true` when shutdown starts, ending long-lived event streams
+    /// so they don't hold up the drain.
+    pub(crate) closing: Arc<watch::Sender<bool>>,
 }
 
 impl AppState {
@@ -65,7 +71,17 @@ impl AppState {
             limits: Arc::new(limits),
             lease: DEFAULT_LEASE,
             http: Arc::default(),
+            dev_controls: false,
+            closing: Arc::new(watch::channel(false).0),
         }
+    }
+
+    /// Enable development-only controls that can disrupt running jobs
+    /// (`POST /v1/dev/workers/{id}/expire-leases`). There is no
+    /// authentication: the caller must only enable this on loopback.
+    pub fn with_dev_controls(mut self, enabled: bool) -> Self {
+        self.dev_controls = enabled;
+        self
     }
 
     /// How long a claim owns its job without a heartbeat.
@@ -77,7 +93,14 @@ impl AppState {
 
 pub fn router(state: AppState) -> Router {
     let body_limit = state.limits.max_request_bytes;
-    Router::new()
+    let mut router = Router::new();
+    if state.dev_controls {
+        router = router.route(
+            "/v1/dev/workers/{worker_id}/expire-leases",
+            post(dashboard_api::expire_leases),
+        );
+    }
+    router
         .route("/healthz", get(health))
         .route("/metrics", get(crate::metrics::metrics))
         .route("/v1/jobs", post(submit_job))
@@ -100,6 +123,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/workers", get(worker_api::list_workers))
         .route("/v1/workers/{worker_id}", put(worker_api::register))
         .route("/v1/workers/{worker_id}/claims", post(worker_api::claim))
+        .route("/v1/dashboard/snapshot", get(dashboard_api::snapshot))
+        .route("/v1/events", get(dashboard_api::events))
         // route_layer: runs after routing, so the route template is known.
         .route_layer(middleware::from_fn_with_state(state.clone(), observe))
         .layer(DefaultBodyLimit::max(body_limit))
@@ -122,8 +147,10 @@ where
 {
     let started_draining = Arc::new(Notify::new());
     let notify = started_draining.clone();
+    let closing = state.closing.clone();
     let server = axum::serve(listener, router(state)).with_graceful_shutdown(async move {
         shutdown.await;
+        closing.send_replace(true);
         // notify_one stores a permit, so the deadline below starts even if
         // it isn't polled yet.
         notify.notify_one();

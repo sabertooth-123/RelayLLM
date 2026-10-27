@@ -3,13 +3,14 @@
 use std::time::Duration;
 
 use relay_core::api::{AttemptView, RegisterWorkerRequest, WorkerView};
+use relay_core::events::EventKind;
 use relay_core::job::{AttemptOutcome, JobId, JobState};
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
 use super::{Store, StoreError, duration_ms};
 
-const SELECT_WORKERS: &str = "
+pub(super) const SELECT_WORKERS: &str = "
     SELECT w.*,
            (SELECT COUNT(*) FROM jobs j WHERE j.worker_id = w.id AND j.state = 'running')
                AS running_jobs
@@ -49,7 +50,14 @@ impl Store {
             .bind(id)
             .fetch_one(&self.reader)
             .await?;
-        worker_from_row(&row)
+        let worker = worker_from_row(&row)?;
+        self.events.publish(
+            now,
+            EventKind::WorkerRegistered {
+                worker: worker.clone(),
+            },
+        );
+        Ok(worker)
     }
 
     pub async fn list_workers(&self) -> Result<Vec<WorkerView>, StoreError> {
@@ -160,7 +168,7 @@ impl Store {
     }
 }
 
-fn worker_from_row(row: &SqliteRow) -> Result<WorkerView, StoreError> {
+pub(super) fn worker_from_row(row: &SqliteRow) -> Result<WorkerView, StoreError> {
     let id: String = row.try_get("id")?;
     let corrupt = |reason: String| StoreError::Corrupt {
         job_id: format!("<worker {id}>"),

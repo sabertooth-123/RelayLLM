@@ -9,6 +9,7 @@
 //! * the report commits first: cancel gets `409 not_cancellable`, and the
 //!   result stands.
 
+use relay_core::events::EventKind;
 use relay_core::job::{AttemptOutcome, Job, JobId, JobState};
 
 use super::claims::finish_attempt;
@@ -94,6 +95,13 @@ impl Store {
             .await?;
         }
         tx.commit().await?;
+        self.events.publish(
+            now,
+            EventKind::JobCancelled {
+                from: Some(from),
+                job: cancelled.summary(),
+            },
+        );
         Ok(CancelOutcome::Cancelled(cancelled))
     }
 }

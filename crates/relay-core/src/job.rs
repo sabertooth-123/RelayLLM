@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::api::{JobResultView, JobStatusView};
 use crate::clock::Timestamp;
+use crate::events::JobSummary;
 
 /// Unique job identifier. UUIDv7, so ids sort roughly by creation time and
 /// don't reveal how many jobs exist.
@@ -251,6 +252,30 @@ impl Job {
             created_at_ms: self.created_at,
             updated_at_ms: self.updated_at,
             finished_at_ms: self.finished_at,
+        }
+    }
+
+    /// Summary for broadcast (dashboard events and snapshots). Carries no
+    /// payload, no result and not the idempotency key itself, only whether
+    /// one exists. Error text is cut to 300 characters.
+    pub fn summary(&self) -> JobSummary {
+        JobSummary {
+            id: self.id,
+            kind: self.kind.clone(),
+            state: self.state,
+            attempt: self.attempt,
+            max_attempts: self.max_attempts,
+            worker_id: self.worker_id.clone(),
+            has_idempotency_key: self.idempotency_key.is_some(),
+            last_error: self
+                .last_error
+                .as_ref()
+                .map(|e| e.chars().take(300).collect()),
+            created_at_ms: self.created_at,
+            updated_at_ms: self.updated_at,
+            finished_at_ms: self.finished_at,
+            available_at_ms: self.available_at,
+            lease_expires_at_ms: self.lease_expires_at,
         }
     }
 

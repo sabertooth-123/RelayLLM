@@ -13,6 +13,7 @@
 
 use std::time::Duration;
 
+use relay_core::events::EventKind;
 use relay_core::job::{AttemptOutcome, Job, JobId, JobState};
 use serde_json::Value;
 use sqlx::{Row, Sqlite, Transaction};
@@ -165,6 +166,20 @@ impl Store {
         .await?;
 
         tx.commit().await?;
+        // Only the first claim leaves `queued`; every later one leaves
+        // `retry_waiting` (failures and expiries both go there).
+        let from = if job.attempt == 1 {
+            JobState::Queued
+        } else {
+            JobState::RetryWaiting
+        };
+        self.events.publish(
+            now,
+            EventKind::JobClaimed {
+                from: Some(from),
+                job: job.summary(),
+            },
+        );
         Ok(Some(job))
     }
 
@@ -197,6 +212,13 @@ impl Store {
                 let job = job_from_row(&row)?;
                 finish_attempt(&mut tx, job_id, attempt, now, outcome, None).await?;
                 tx.commit().await?;
+                self.events.publish(
+                    now,
+                    EventKind::JobSucceeded {
+                        from: Some(JobState::Running),
+                        job: job.summary(),
+                    },
+                );
                 Ok(ReportOutcome::Applied(job))
             }
             None => rejected_report(&mut tx, job_id, attempt, worker_id, outcome).await,
@@ -241,6 +263,16 @@ impl Store {
                 let job = job_from_row(&row)?;
                 finish_attempt(&mut tx, job_id, attempt, now, outcome, Some(error)).await?;
                 tx.commit().await?;
+                let from = Some(JobState::Running);
+                let summary = job.summary();
+                self.events.publish(
+                    now,
+                    if job.state == JobState::RetryWaiting {
+                        EventKind::JobRetryScheduled { from, job: summary }
+                    } else {
+                        EventKind::JobFailed { from, job: summary }
+                    },
+                );
                 Ok(ReportOutcome::Applied(job))
             }
             None => rejected_report(&mut tx, job_id, attempt, worker_id, outcome).await,

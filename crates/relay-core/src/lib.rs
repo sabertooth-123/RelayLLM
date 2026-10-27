@@ -6,6 +6,7 @@
 
 pub mod api;
 pub mod clock;
+pub mod events;
 pub mod job;
 pub mod retry;
 pub mod submission;

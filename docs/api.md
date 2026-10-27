@@ -146,6 +146,79 @@ Prometheus text format (`text/plain; version=0.0.4`).
   therefore treats 500/502/504 as ambiguous and retries only under
   idempotency.
 
+## `GET /v1/dashboard/snapshot`: observer snapshot
+
+`200` with everything a dashboard needs to (re)build its view. Read-only.
+Counts, workers and jobs come from **one** read transaction, so they agree.
+
+```json
+{
+  "epoch": "01a17ea8-…",          // this coordinator run; changes on restart
+  "seq": 56,                      // taken BEFORE the reads below
+  "server_time_ms": 1793126099084,
+  "lease_ms": 30000,
+  "max_active_jobs": 10000,
+  "counts": [{ "state": "queued", "count": 0 }, …],   // all six states, exact
+  "workers": [ /* as GET /v1/workers */ ],
+  "jobs": [ /* JobSummary: active (≤ 500, oldest first), then the 100 most recently finished */ ],
+  "active_jobs_truncated": false,
+  "recent_events": [ /* up to 200 events with seq ≤ snapshot seq */ ],
+  "dev_controls": false
+}
+```
+
+A `JobSummary` has `id, kind, state, attempt, max_attempts, worker_id,
+has_idempotency_key, last_error (≤ 300 chars), created_at_ms, updated_at_ms,
+finished_at_ms, available_at_ms, lease_expires_at_ms`. It never contains the
+payload, the result or the idempotency key itself.
+
+## `GET /v1/events`: live event stream (SSE)
+
+`text/event-stream`. Message names:
+
+| `event:` | `data:` |
+|---|---|
+| `hello` | `{"epoch", "seq"}`: always first; `seq` is the last event published before this subscription |
+| `job` | a job transition: `{"seq", "epoch", "at_ms", "type", "from", "job": JobSummary, …}` |
+| `worker` | `worker_registered {worker}` or `worker_heartbeat {worker_id, job_id, attempt, lease_expires_at_ms}` |
+| `ping` | `{}` every 5 s, so clients can detect a dead connection |
+| `resync` | the subscriber fell > 1,024 events behind; the stream then ends |
+
+Job `type`s and their transitions: `job_submitted` (`null` → `queued`),
+`job_claimed` (`queued`/`retry_waiting` → `running`), `job_succeeded`,
+`job_retry_scheduled` (`running` → `retry_waiting`), `job_failed`,
+`job_cancelled`, `lease_expired` (`running` → `retry_waiting`/`failed`, plus
+the `worker_id` that lost the job and a `reason`).
+
+Guarantees and non-guarantees:
+
+* Events are published only **after** their transaction commits, one per
+  applied transition. Rejected, stale and idempotently replayed requests
+  publish nothing.
+* Within an epoch `seq` increases by exactly 1 per event.
+* The stream is in memory: a restart starts a new epoch at `seq` 1, and a
+  slow subscriber is dropped (`resync`). Two transactions that commit
+  back-to-back can be *published* in the opposite order. Clients must check
+  each transition's `from` against the state they hold and re-fetch the
+  snapshot when it doesn't fit. `dashboard/src/state.ts` is a reference
+  implementation.
+
+Recommended client sequence: open the stream, wait for `hello`, fetch the
+snapshot, apply buffered and live events with `seq` > snapshot `seq`.
+
+## `POST /v1/dev/workers/{worker_id}/expire-leases` (development only)
+
+Exists only when the coordinator runs with `--dev-controls`, which it refuses
+on a non-loopback `--bind`; otherwise `404`. Ends the lease of every job the
+worker is running and runs the reaper immediately, exactly as if the worker
+had stopped heartbeating (`lease_expired` attempts, retry or fail). The
+worker process is not touched; its next report for those attempts gets
+`409 stale_attempt`.
+
+```json
+{ "worker_id": "alpha-01a17ea4-…", "expired_jobs": 2 }
+```
+
 ## `GET /v1/jobs/{id}/attempts`: attempt history
 
 `200` with one entry per claim, oldest first:

@@ -9,6 +9,7 @@
 use std::time::Duration;
 
 use relay_core::clock::Timestamp;
+use relay_core::events::EventKind;
 use relay_core::job::{AttemptOutcome, Job, JobId, JobState};
 
 use super::claims::finish_attempt;
@@ -66,7 +67,17 @@ impl Store {
             .await?;
 
         if let Some(row) = row {
-            return job_from_row(&row);
+            let job = job_from_row(&row)?;
+            self.events.publish(
+                now,
+                EventKind::WorkerHeartbeat {
+                    worker_id: worker_id.to_owned(),
+                    job_id,
+                    attempt,
+                    lease_expires_at_ms: job.lease_expires_at.unwrap_or(now),
+                },
+            );
+            return Ok(job);
         }
         let current = self
             .get(job_id)
@@ -103,6 +114,7 @@ impl Store {
         .await?;
 
         let mut reaped = Vec::with_capacity(rows.len());
+        let mut events = Vec::with_capacity(rows.len());
         for row in &rows {
             let job = job_from_row(row)?;
             let worker_id = job.worker_id.clone().unwrap_or_default();
@@ -114,6 +126,8 @@ impl Store {
                 JobState::Failed
             };
 
+            // Computed once: the backoff is jittered.
+            let available_at = retry_at(&self.options.retry, now, job.attempt);
             let updated = sqlx::query(
                 "UPDATE jobs
                  SET state = ?, available_at = ?, finished_at = ?, last_error = ?,
@@ -122,7 +136,7 @@ impl Store {
                  WHERE id = ? AND attempt = ? AND state = 'running' AND lease_expires_at < ?",
             )
             .bind(new_state.as_str())
-            .bind(retry_at(&self.options.retry, now, job.attempt))
+            .bind(available_at)
             .bind((!retry).then_some(now))
             .bind(&reason)
             .bind(now)
@@ -144,15 +158,36 @@ impl Store {
                 Some(&reason),
             )
             .await?;
+            // The row as the UPDATE above left it, for the event.
+            let after = Job {
+                state: new_state,
+                available_at,
+                finished_at: (!retry).then_some(now),
+                last_error: Some(reason.clone()),
+                worker_id: None,
+                lease_expires_at: None,
+                attempt_deadline: None,
+                updated_at: now,
+                ..job
+            };
+            events.push(EventKind::LeaseExpired {
+                from: Some(JobState::Running),
+                job: after.summary(),
+                worker_id: worker_id.clone(),
+                reason: reason.clone(),
+            });
             reaped.push(ReapedJob {
-                job_id: job.id,
-                attempt: job.attempt,
+                job_id: after.id,
+                attempt: after.attempt,
                 worker_id,
                 new_state,
                 reason,
             });
         }
         tx.commit().await?;
+        for event in events {
+            self.events.publish(now, event);
+        }
         Ok(reaped)
     }
 

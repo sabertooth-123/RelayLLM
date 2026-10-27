@@ -31,6 +31,16 @@ First release: a fault-tolerant, durable job queue for LLM workloads.
 - **Single-connection writer pool + read-only reader pool**, after the
   benchmark traced lost throughput to SQLite busy-handler polling. Measured
   gains: up to 9.8× under `normal`, 1.0–1.8× under `full`.
+- **Live dashboard** (`dashboard/`, React + TypeScript + Vite): counts, a
+  coordinator–worker network view, job table with filters, job inspector,
+  event timeline, mock-job submission. Backed by new read-only endpoints
+  `GET /v1/dashboard/snapshot` and `GET /v1/events` (SSE). Store operations
+  publish an event after each committed transition, with a per-run `epoch`,
+  contiguous `seq` and the transition's `from` state, so clients can detect
+  duplicates, staleness and gaps and resync from the snapshot.
+- **`--dev-controls`** (loopback only): `POST
+  /v1/dev/workers/{id}/expire-leases` to simulate a worker failure.
+- Migration `0004`: partial index on `finished_at` for "recently finished" queries.
 - **Tooling**: `relay demo` (checked ten-step failure-recovery demo), `relay
   bench` (CSV/JSON output), PowerShell scripts for both, Dockerfile and Compose
   (1 coordinator + 3 workers).

@@ -440,3 +440,40 @@ v0.1 has **no authentication**. It assumes a trusted local network (one
 machine or a private Docker network). Bind the coordinator to `127.0.0.1`
 (the default) unless you put it behind an authenticating proxy. Prompt contents
 are never logged. Logs carry job ids, kinds, states and sizes.
+
+The dashboard endpoints follow the same rule: events and snapshots carry job
+summaries only (no payload, result or idempotency key), and the one
+destructive control, `--dev-controls`, is refused unless the bind address is
+loopback.
+
+## 9. Observers: snapshot + event stream
+
+The dashboard (`dashboard/`) must show real state without polling every
+table. Design:
+
+* **Publish after commit, from the store.** Each `Store` method that applies
+  a transition publishes one `DashboardEvent` after `COMMIT` succeeds:
+  never for a rollback, a fenced-out (`stale_attempt`) report, or an
+  idempotent replay. Emission lives next to the SQL, not in HTTP handlers, so
+  the reaper and the dev control publish too.
+* **`seq` + `epoch`.** An in-process `EventBus` assigns `seq` under one lock
+  together with the broadcast send, so subscribers see `seq` in order and
+  contiguous. `epoch` is a fresh id per process; nothing is persisted.
+* **Transitions, not states.** Job events carry `from`. Commits and
+  publications aren't one atomic step, so two back-to-back commits can be
+  published in reverse; the `from` check turns that into a detected anomaly
+  instead of a wrong count.
+* **Snapshot `seq` is read before the data**, and the data is read in one
+  read transaction. Every event ≤ snapshot `seq` is therefore reflected;
+  later ones may be, and clients tell them apart by `from` and
+  `updated_at_ms`.
+* **Failure mode is "resync", never "guess".** Lag (broadcast capacity
+  1,024), restart, gaps and misfits all lead the client to a fresh snapshot.
+  A visible `ping` every 5 s lets it notice silent connection loss.
+* **Worker health is derived from `workers.last_seen_at`**, which the
+  coordinator updates on every claim, claim poll and heartbeat. The browser
+  never infers a crash from its own missing events.
+
+Cost on the hot path: one mutex acquisition and a `broadcast::send` per
+committed transition. Heartbeats publish too (the dashboard hides them by
+default).

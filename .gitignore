@@ -6,3 +6,7 @@
 # Benchmark runs keep their summary files; the per-scenario cluster
 # directories (databases and process logs) are large and regenerable.
 /bench/results/*/clusters/
+
+# Dashboard (Vite)
+/dashboard/node_modules/
+/dashboard/dist/

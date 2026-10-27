@@ -34,6 +34,8 @@ axum = "0.8"
 clap = { version = "4", features = ["derive", "env"] }
 # Backoff jitter. Tiny, no dependencies.
 fastrand = "2"
+# SSE stream for the dashboard. Already a dependency of axum.
+futures-util = { version = "0.3", default-features = false }
 # No TLS backend yet: every endpoint we talk to is a local coordinator.
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 serde = { version = "1", features = ["derive"] }

@@ -160,6 +160,23 @@ Risky-but-legal ones (e.g. binding a non-loopback address) log a warning.
 Keep the database on a local disk. Network drives and sync folders (OneDrive,
 Dropbox) break SQLite locking.
 
+## Live dashboard
+
+A browser view of a running cluster: per-state counts, the coordinator and
+its workers (busy / idle / unavailable / disconnected), the queue and recent
+history, an event timeline and a per-job inspector with attempt history. It
+reads only coordinator state, over `GET /v1/dashboard/snapshot` plus a
+server-sent event stream (`GET /v1/events`). Nothing is simulated.
+
+```powershell
+cargo run -p relay-cli -- coordinator --dev-controls   # --dev-controls: optional, loopback only
+cargo run -p relay-cli -- worker --name alpha          # one or more
+cd dashboard; npm install; npm run dev                 # http://localhost:5173
+```
+
+[`dashboard/README.md`](dashboard/README.md) covers the sync protocol
+(snapshot + `seq`/`epoch`-checked events, resync on any doubt) and its limits.
+
 ## Performance
 
 Measured, not estimated. Full numbers, method and caveats are in
@@ -184,6 +201,7 @@ The short version, on one Windows laptop running everything:
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cd dashboard; npm test; npm run build; cd ..                  # dashboard reducer tests + type-check + bundle
 powershell -ExecutionPolicy Bypass -File scripts\bench.ps1   # reproduce the benchmark
 ```
 
@@ -191,6 +209,7 @@ powershell -ExecutionPolicy Bypass -File scripts\bench.ps1   # reproduce the ben
 
 * [`ARCHITECTURE.md`](ARCHITECTURE.md): components, state machine, claim/lease/fencing design, sequence diagrams, risks
 * [`docs/api.md`](docs/api.md): HTTP contract
+* [`dashboard/README.md`](dashboard/README.md): live dashboard setup and sync protocol
 * [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md): what is tested, how, and the latest results
 * [`bench/README.md`](bench/README.md): benchmark method and results
 * [`docs/decisions/`](docs/decisions): architecture decision records

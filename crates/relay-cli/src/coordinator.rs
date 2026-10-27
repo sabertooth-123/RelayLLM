@@ -81,6 +81,12 @@ pub struct CoordinatorArgs {
 
     #[arg(long, env = "RELAY_LOG_FORMAT", value_enum, default_value_t = LogFormat::Text)]
     log_format: LogFormat,
+
+    /// Development only: enable `POST /v1/dev/workers/{id}/expire-leases`,
+    /// which simulates a worker failure for the dashboard. Unauthenticated,
+    /// so it is refused unless --bind is loopback.
+    #[arg(long)]
+    dev_controls: bool,
 }
 
 impl CoordinatorArgs {
@@ -116,6 +122,13 @@ impl CoordinatorArgs {
                 "--request-timeout-secs ({}) >= --lease-secs ({}): a single slow heartbeat \
                  request could outlive the lease it is renewing",
                 self.request_timeout_secs, self.lease_secs
+            ));
+        }
+        if self.dev_controls && !self.bind.ip().is_loopback() {
+            v.error(format!(
+                "--dev-controls can disrupt running jobs and has no authentication; \
+                 it requires a loopback --bind, not {}",
+                self.bind
             ));
         }
         if !self.bind.ip().is_loopback() {
@@ -219,7 +232,12 @@ pub async fn run(args: CoordinatorArgs) -> anyhow::Result<ExitCode> {
         request_timeout: Duration::from_secs(args.request_timeout_secs),
         ..Limits::default()
     };
-    let state = AppState::new(store.clone(), limits).with_lease(lease);
+    if args.dev_controls {
+        warn!("--dev-controls: development failure controls are enabled");
+    }
+    let state = AppState::new(store.clone(), limits)
+        .with_lease(lease)
+        .with_dev_controls(args.dev_controls);
     let drain = Duration::from_secs(args.shutdown_drain_secs);
     let served = relay_server::serve(listener, state, shutdown_signal(), drain).await;
     reaper.abort();
@@ -301,5 +319,13 @@ mod tests {
         ]);
         assert!(v.errors.is_empty());
         assert_eq!(v.warnings.len(), 2, "{:#?}", v.warnings);
+    }
+
+    #[test]
+    fn dev_controls_require_a_loopback_bind() {
+        assert!(validate(&["--dev-controls"]).errors.is_empty());
+        let v = validate(&["--dev-controls", "--bind", "0.0.0.0:7070"]);
+        assert_eq!(v.errors.len(), 1, "{:#?}", v.errors);
+        assert!(v.errors[0].contains("--dev-controls"));
     }
 }

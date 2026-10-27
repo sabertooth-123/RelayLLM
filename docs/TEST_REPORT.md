@@ -5,9 +5,11 @@
 | | |
 |---|---|
 | Command | `cargo test --workspace` (debug build) |
-| Result | **127 passed, 0 failed**, 1 ignored (an `ignore`-marked doc example in `handler.rs`) |
-| Wall time | 47 s (already compiled) |
+| Result | **138 passed, 0 failed**, 1 ignored (an `ignore`-marked doc example in `handler.rs`) |
+| Wall time | 57 s (already compiled) |
 | Lint | `cargo fmt --all --check` clean · `cargo clippy --workspace --all-targets -- -D warnings` clean |
+| Dashboard | `npm test`: 13 reducer tests pass (vitest) · `npm run build`: `tsc --noEmit` clean, bundle builds · `npm audit`: 0 vulnerabilities |
+| Dashboard, end to end | Real coordinator (`--dev-controls`, 6 s lease) + 3 real workers, driven in a browser: empty and unreachable states; 8 jobs submitted from the UI, each failing attempt 1 and succeeding on attempt 2 (UI counts and `seq` equal a fresh snapshot: 0 duplicates, 0 stale, 0 resyncs); dev lease expiry (2 jobs → retrying, worker shown idle); a worker process killed (shown *unavailable* after one lease, *disconnected* after three); page reload (state rebuilt from the snapshot); coordinator stopped (banner, every worker *unknown*) and restarted (new epoch, one resync, durable counts restored); 375 px width without horizontal scroll |
 | Environment | Windows 11 Home 10.0.26200, Intel64 Family 6 Model 183 (20 logical CPUs), rustc/cargo 1.99.1 |
 | Also run | `scripts/demo.ps1` (16/16 demo checks, then the suite: all pass) and `scripts/demo-compose.ps1` (15/15 checks against Docker Compose). Both under **Windows PowerShell 5.1** |
 
@@ -19,9 +21,9 @@ in `.github/workflows/ci.yml` runs the same commands on Ubuntu and Windows.
 | Test binary | Tests | What it covers |
 |---|---|---|
 | `relay-core` unit | 26 | state machine table, validation, fingerprints, retry backoff math, monotonic clock |
-| `relay-server` unit | 3 | active-state list vs state machine; clock-jump detector; one writer connection + read-only reader pool |
+| `relay-server` unit | 5 | active-state list vs state machine; clock-jump detector; one writer connection + read-only reader pool; event bus `seq` contiguity, bounded ring, per-bus epoch |
 | `relay-worker` unit | 4 | mock handler determinism and scripted failures; backoff jitter |
-| `relay-cli` unit | 7 | config validation (all errors at once, warnings); benchmark percentiles |
+| `relay-cli` unit | 8 | config validation (all errors at once, warnings, `--dev-controls` needs loopback); benchmark percentiles |
 | `relay-server/tests/store.rs` | 7 | persistence across reopen, idempotency, capacity, durability pragmas |
 | `…/api.rs` | 6 | HTTP contract and error codes, restart over HTTP |
 | `…/schema.rs` | 2 | the database rejects 16 impossible job states |
@@ -31,6 +33,7 @@ in `.github/workflows/ci.yml` runs the same commands on Ubuntu and Windows.
 | `…/cancel.rs` | 6 | cancellation and its races with complete and claim |
 | `…/ops.rs` | 4 | 504 timeout ambiguity, drain deadline, `/metrics`, reads stay fast while 12 writes queue behind a held lock |
 | `…/workers_api.rs` | 2 | worker protocol over raw HTTP |
+| `…/dashboard.rs` | 8 | one event per committed transition, in order, contiguous `seq`; nothing for rejected/stale/replayed calls; `lease_expired` matches the committed row; dev expiry scoped to one worker; snapshot hides payload/result/key; SSE `hello` → events → visible `ping`; dev route `404` unless enabled |
 | `…/multi_worker.rs` | 12 | real `Worker` loops: concurrency, retries, lost responses, heartbeats, cancel, timeouts, oversized results |
 | `relay-worker/tests/openai.rs` | 7 | `chat` handler against a fake endpoint: mapping, auth, error classification |
 | `relay-cli/tests/cli_errors.rs` | 5 | real binary: invalid config/input, unusable DB path, unreachable coordinator |

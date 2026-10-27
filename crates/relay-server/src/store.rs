@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use relay_core::clock::{Clock, Timestamp};
+use relay_core::events::EventKind;
 use relay_core::job::{InvalidTransition, Job, JobId, JobState};
 use relay_core::retry::RetryPolicy;
 use relay_core::submission::NewJob;
@@ -38,11 +39,15 @@ const INSERT_JOB: &str = "
 
 mod cancel;
 mod claims;
+mod dashboard;
 mod leases;
 mod workers;
 
+use crate::events::EventBus;
+
 pub use cancel::{CANCELLED_MESSAGE, CancelOutcome};
 pub use claims::ReportOutcome;
+pub use dashboard::DashboardView;
 pub use leases::{ReapedJob, wall_clock_jumped};
 pub use workers::MetricsSnapshot;
 
@@ -170,6 +175,9 @@ pub struct Store {
     reader: SqlitePool,
     clock: Arc<dyn Clock>,
     options: StoreOptions,
+    /// Published to after every committed state change (never before commit,
+    /// never for a rolled-back transaction).
+    events: EventBus,
 }
 
 impl Store {
@@ -204,6 +212,7 @@ impl Store {
         Ok(Self {
             writer,
             reader,
+            events: EventBus::new(),
             clock,
             options,
         })
@@ -276,7 +285,15 @@ impl Store {
             .await?;
 
         if let Some(row) = inserted {
-            return Ok(SubmitOutcome::Created(job_from_row(&row)?));
+            let created = job_from_row(&row)?;
+            self.events.publish(
+                now,
+                EventKind::JobSubmitted {
+                    from: None,
+                    job: created.summary(),
+                },
+            );
+            return Ok(SubmitOutcome::Created(created));
         }
 
         // Nothing inserted: either the key is taken or the queue is full. Keys
