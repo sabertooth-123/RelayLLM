@@ -72,6 +72,11 @@ describe("applyEvent", () => {
     expect([count(m, "queued"), count(m, "running"), count(m, "succeeded")]).toEqual([0, 0, 1]);
     expect(m.jobs.a!.state).toBe("succeeded");
     expect(m.stats.applied).toBe(3);
+    // The success event has worker_id null; the activity keeps who did it.
+    expect(m.activity.map((a) => [a.kind, a.workerId])).toEqual([
+      ["claim", "w1"],
+      ["done", "w1"],
+    ]);
   });
 
   it("ignores duplicate events without double counting", () => {

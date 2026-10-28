@@ -34,6 +34,17 @@ export interface SyncStats {
   stale: number;
 }
 
+export type ActivityKind = "claim" | "heartbeat" | "done" | "retry" | "fail" | "expired";
+
+/** One worker ↔ coordinator exchange, for the topology animation. */
+export interface Activity {
+  seq: number;
+  workerId: string;
+  kind: ActivityKind;
+}
+
+export const ACTIVITY_LIMIT = 200;
+
 export interface Model {
   epoch: string;
   /** Last applied seq. */
@@ -53,6 +64,12 @@ export interface Model {
   workers: Record<string, WorkerView>;
   /** Oldest first. */
   events: DashboardEvent[];
+  /**
+   * Applied exchanges with the worker involved, oldest first. Completion
+   * events carry `worker_id: null` (the job no longer has an owner), so the
+   * worker comes from the job as held just before the transition.
+   */
+  activity: Activity[];
   /** Set when the stream can no longer be applied; the hook resyncs. */
   resync: string | null;
   stats: SyncStats;
@@ -73,6 +90,7 @@ export function fromSnapshot(snap: DashboardSnapshot, localNowMs: number): Model
     jobs: Object.fromEntries(snap.jobs.map((j) => [j.id, j])),
     workers: Object.fromEntries(snap.workers.map((w) => [w.id, w])),
     events: snap.recent_events.slice(-EVENT_LOG_LIMIT),
+    activity: [],
     resync: null,
     stats: { applied: 0, duplicates: 0, stale: 0 },
   };
@@ -118,9 +136,34 @@ export function applyEvent(model: Model, event: DashboardEvent): Model {
               },
             }
           : next.jobs;
-      return counted({ ...next, workers, jobs });
+      const activity = appendCapped<Activity>(
+        next.activity,
+        { seq: event.seq, workerId: event.worker_id, kind: "heartbeat" },
+        ACTIVITY_LIMIT,
+      );
+      return counted({ ...next, workers, jobs, activity });
     }
   }
+}
+
+const TRANSITION_ACTIVITY: Partial<Record<JobEvent["type"], ActivityKind>> = {
+  job_claimed: "claim",
+  job_succeeded: "done",
+  job_retry_scheduled: "retry",
+  job_failed: "fail",
+  lease_expired: "expired",
+};
+
+function activityFor(event: JobEvent, held: JobSummary | undefined): Activity | null {
+  const kind = TRANSITION_ACTIVITY[event.type];
+  if (!kind) return null;
+  const workerId =
+    event.type === "job_claimed"
+      ? event.job.worker_id
+      : event.type === "lease_expired"
+        ? event.worker_id
+        : (held?.worker_id ?? null);
+  return workerId ? { seq: event.seq, workerId, kind } : null;
 }
 
 function applyTransition(model: Model, event: JobEvent): Model {
@@ -153,11 +196,13 @@ function applyTransition(model: Model, event: JobEvent): Model {
   if (event.type === "job_claimed" && job.worker_id) {
     workers = touchWorker(workers, job.worker_id, event.at_ms);
   }
+  const act = activityFor(event, held);
   return counted({
     ...model,
     counts,
     workers,
     jobs: evictTerminal({ ...model.jobs, [job.id]: job }),
+    activity: act ? appendCapped(model.activity, act, ACTIVITY_LIMIT) : model.activity,
   });
 }
 

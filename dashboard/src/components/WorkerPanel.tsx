@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "../api";
-import { ago, dateTime, duration } from "../format";
+import { ago, clock, dateTime, duration, since, workerLabel } from "../format";
 import { short, workerHealth, type Model } from "../state";
 import type { JobSummary } from "../types";
 
@@ -18,27 +18,41 @@ interface Props {
 export function WorkerPanel({ model, workerId, running, serverNow, live, onSelectJob, onClose }: Props) {
   const worker = model.workers[workerId];
   const [busy, setBusy] = useState(false);
+  const [armed, setArmed] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setArmed(false);
+    setMessage(null);
+  }, [workerId]);
 
   if (!worker) {
     return (
-      <aside className="panel side">
+      <section className="panel">
         <div className="panel-head">
           <h2>Worker</h2>
-          <button className="ghost" onClick={onClose} aria-label="Close">✕</button>
+          <span className="grow" />
+          <button className="close" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
         </div>
-        <div className="empty">Worker {workerId} is not known to this coordinator.</div>
-      </aside>
+        <p className="muted">Worker {workerId} is not known to this coordinator.</p>
+      </section>
     );
   }
 
   const health = workerHealth(worker, running.length, serverNow, model.leaseMs, live);
-  const silence = serverNow - worker.last_seen_at_ms;
+  const silence = Math.max(0, serverNow - worker.last_seen_at_ms);
 
+  // Two clicks instead of a browser dialog: arm, then confirm.
   const expire = async () => {
-    if (!window.confirm(`Expire the leases of every job running on ${worker.id}?\n\nThe jobs are reaped as if the worker had stopped heartbeating, and its reports for them will be rejected.`)) return;
+    if (!armed) {
+      setArmed(true);
+      setMessage(null);
+      return;
+    }
+    setArmed(false);
     setBusy(true);
-    setMessage(null);
     try {
       const r = await api.expireLeases(worker.id);
       setMessage(`Expired ${r.expired_jobs} lease${r.expired_jobs === 1 ? "" : "s"}.`);
@@ -50,72 +64,94 @@ export function WorkerPanel({ model, workerId, running, serverNow, live, onSelec
   };
 
   return (
-    <aside className="panel side">
+    <section className="panel">
       <div className="panel-head">
         <h2>
-          Worker <span className="mono">{worker.id}</span>
+          Worker <span className="mono" style={{ fontWeight: 500 }}>{workerLabel(worker.id, worker.name)}</span>
         </h2>
-        <button className="ghost" onClick={onClose} aria-label="Close">✕</button>
+        <span className={`tag h-${health}`}>{health}</span>
+        <span className="grow" />
+        <button className="close" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
       </div>
-      <p>
-        <span className={`pill h-${health}`}>{health}</span>{" "}
-        <span className="muted small">
-          {health === "unknown"
-            ? "dashboard not connected; last known state shown"
-            : health === "unavailable" || health === "disconnected"
-              ? `no claim, poll or heartbeat for ${duration(silence)} (lease ${duration(model.leaseMs)})`
-              : `last seen ${ago(worker.last_seen_at_ms, serverNow)}`}
-        </span>
+      <p style={{ margin: "0 0 12px", fontSize: 11.5, color: "var(--text-mid)" }}>
+        {health === "unknown"
+          ? "Dashboard not connected; last known state shown."
+          : health === "unavailable" || health === "disconnected"
+            ? `No claim, poll or heartbeat for ${duration(silence)} (lease ${duration(model.leaseMs)}).`
+            : `Last seen ${since(worker.last_seen_at_ms, serverNow)} via claim poll or heartbeat.`}
       </p>
-      <dl className="kv">
-        <dt>Name</dt>
-        <dd>{worker.name}</dd>
-        <dt>Kinds</dt>
-        <dd className="mono">{worker.kinds.join(", ")}</dd>
-        <dt>Concurrency</dt>
-        <dd>
+      <div className="kv">
+        <span>ID</span>
+        <span className="v">{worker.id}</span>
+        <span>Kinds</span>
+        <span className="v">{worker.kinds.join(", ")}</span>
+        <span>Concurrency</span>
+        <span className="v">
           {running.length} / {worker.concurrency} slots busy
-        </dd>
-        <dt>Registered</dt>
-        <dd>{dateTime(worker.registered_at_ms)}</dd>
-        <dt>Last seen</dt>
-        <dd>
-          {dateTime(worker.last_seen_at_ms)} <span className="muted">({ago(worker.last_seen_at_ms, serverNow)})</span>
-        </dd>
-      </dl>
+        </span>
+        <span>Registered</span>
+        <span className="v">{dateTime(worker.registered_at_ms)}</span>
+        <span>Last seen</span>
+        <span className="v">
+          {clock(worker.last_seen_at_ms)} ({since(worker.last_seen_at_ms, serverNow)})
+        </span>
+      </div>
 
       <h3>Active jobs</h3>
       {running.length === 0 ? (
-        <p className="muted">None.</p>
+        <p className="muted" style={{ fontSize: 12 }}>
+          None.
+        </p>
       ) : (
-        <ul className="plain">
-          {running.map((j) => (
-            <li key={j.id}>
-              <button className="link mono" onClick={() => onSelectJob(j.id)}>
-                …{short(j.id)}
-              </button>{" "}
-              attempt {j.attempt}/{j.max_attempts}
-              {j.lease_expires_at_ms ? (
-                <span className="muted"> · lease {ago(j.lease_expires_at_ms, serverNow)}</span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
+        <div className="stack">
+          {running.map((j) => {
+            const left = (j.lease_expires_at_ms ?? serverNow) - serverNow;
+            const pct = Math.max(0, Math.min(100, (left / model.leaseMs) * 100));
+            const low = pct < 40;
+            return (
+              <button key={j.id} className="wjob" onClick={() => onSelectJob(j.id)}>
+                <span className="wjob-top">
+                  <span>
+                    …{short(j.id)}{" "}
+                    <span className="muted">
+                      attempt {j.attempt}/{j.max_attempts}
+                    </span>
+                  </span>
+                  <span style={{ color: low ? "var(--warn)" : "var(--text-2)" }}>
+                    {j.lease_expires_at_ms ? `lease ${ago(j.lease_expires_at_ms, serverNow)}` : "no lease"}
+                  </span>
+                </span>
+                <span className={`lease${low ? " low" : ""}`}>
+                  <span style={{ width: `${pct}%` }} />
+                </span>
+              </button>
+            );
+          })}
+        </div>
       )}
 
       {model.devControls ? (
         <div className="dev">
-          <h3>Development controls</h3>
-          <p className="muted small">
-            Enabled with <code>--dev-controls</code> (loopback only). This does not stop the worker process; it expires
-            its leases so the coordinator recovers the jobs exactly as after a crash.
+          <div className="dev-title">Development controls</div>
+          <p>
+            Expires this worker's leases so the coordinator recovers its jobs exactly as it would after a crash. The
+            worker process keeps running, and the coordinator rejects its reports for those jobs.
           </p>
-          <button className="danger" disabled={busy || running.length === 0} onClick={expire}>
-            Simulate failure: expire leases
+          <button
+            className={`danger${armed ? " armed" : ""}`}
+            disabled={busy || running.length === 0}
+            onClick={expire}
+            onBlur={() => setArmed(false)}
+          >
+            {armed
+              ? `Confirm: expire ${running.length} lease${running.length === 1 ? "" : "s"}`
+              : "Simulate failure: expire leases"}
           </button>
-          {message ? <p className="small">{message}</p> : null}
+          {message ? <p className="danger-msg">{message}</p> : null}
         </div>
       ) : null}
-    </aside>
+    </section>
   );
 }

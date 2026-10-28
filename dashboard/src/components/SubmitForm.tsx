@@ -40,51 +40,77 @@ export function SubmitForm({ onSubmitted }: { onSubmitted: (id: string) => void 
   };
 
   return (
-    <form className="panel side submit" onSubmit={submit}>
-      <div className="panel-head">
-        <h2>Submit mock job</h2>
-      </div>
-      <p className="muted small">
-        Real jobs of kind <code>mock</code>, handled by the built-in mock LLM on any worker that registered for it.
+    <form className="panel" onSubmit={submit}>
+      <h2>Submit mock job</h2>
+      <p className="panel-lede">
+        Real jobs of kind <code>mock</code>, sent with <code>POST /v1/jobs</code> and run by any worker registered for
+        that kind.
       </p>
-      <label>
-        Prompt
-        <input value={prompt} onChange={(e) => setPrompt(e.target.value)} required maxLength={2000} />
-      </label>
-      <div className="row">
+      <div className="form-grid">
+        <label className="full">
+          Prompt
+          <input value={prompt} onChange={(e) => setPrompt(e.target.value)} required maxLength={2000} />
+        </label>
         <label>
           Delay (ms)
-          <input type="number" min={0} max={60000} step={100} value={delayMs} onChange={(e) => setDelayMs(Number(e.target.value))} />
+          <input
+            type="number"
+            min={0}
+            max={60000}
+            step={100}
+            value={delayMs}
+            onChange={(e) => setDelayMs(Number(e.target.value))}
+          />
         </label>
         <label>
           Max attempts
-          <input type="number" min={1} max={20} value={maxAttempts} onChange={(e) => setMaxAttempts(Number(e.target.value))} />
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={maxAttempts}
+            onChange={(e) => setMaxAttempts(Number(e.target.value))}
+          />
         </label>
-      </div>
-      <div className="row">
         <label>
           Fail first N attempts
-          <input type="number" min={0} max={20} value={failAttempts} onChange={(e) => setFailAttempts(Number(e.target.value))} />
+          <input
+            type="number"
+            min={0}
+            max={20}
+            value={failAttempts}
+            onChange={(e) => setFailAttempts(Number(e.target.value))}
+          />
         </label>
         <label>
           Failure kind
-          <select value={failKind} onChange={(e) => setFailKind(e.target.value as "retryable" | "permanent")} disabled={failAttempts === 0}>
+          <select
+            value={failKind}
+            onChange={(e) => setFailKind(e.target.value as "retryable" | "permanent")}
+            disabled={failAttempts === 0}
+          >
             <option value="retryable">retryable</option>
             <option value="permanent">permanent</option>
           </select>
         </label>
+        <label>
+          How many
+          <input
+            type="number"
+            min={1}
+            max={200}
+            value={count}
+            onChange={(e) => setCount(Math.max(1, Math.min(200, Number(e.target.value))))}
+          />
+        </label>
+        <button className="primary" disabled={busy}>
+          {busy ? "Submitting…" : count === 1 ? "Submit job" : `Submit ${count} jobs`}
+        </button>
       </div>
-      <label>
-        How many
-        <input type="number" min={1} max={200} value={count} onChange={(e) => setCount(Math.max(1, Math.min(200, Number(e.target.value))))} />
-      </label>
-      <button className="primary" disabled={busy}>
-        {busy ? "Submitting…" : count === 1 ? "Submit job" : `Submit ${count} jobs`}
-      </button>
-      {message ? <p className={message.ok ? "ok small" : "err small"}>{message.text}</p> : null}
-      <p className="muted small">
-        Pausing submissions isn't offered: the coordinator has no safe pause mechanism. It applies backpressure
-        instead (<code>503 queue_full</code> at the capacity limit).
+      {message ? <p className={`msg ${message.ok ? "ok" : "bad"}`}>{message.text}</p> : null}
+      <p className="note" style={{ marginTop: 12 }}>
+        There's no pause control because the coordinator has no safe way to pause. When it's at capacity it rejects
+        new jobs with <code>503 queue_full</code> instead.
       </p>
     </form>
   );
