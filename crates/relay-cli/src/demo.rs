@@ -36,18 +36,27 @@ pub struct DemoArgs {
 
 const WORKERS: [&str; 3] = ["w1", "w2", "w3"];
 
-#[derive(Default)]
-struct Report {
-    passed: usize,
-    failed: Vec<String>,
+/// Every claim a demo makes is a check; any failure makes it exit 1.
+pub(crate) struct Report {
+    steps: u32,
+    pub(crate) passed: usize,
+    pub(crate) failed: Vec<String>,
 }
 
 impl Report {
-    fn step(&self, n: u32, title: &str) {
-        println!("\n[{n}/10] {title}");
+    pub(crate) fn new(steps: u32) -> Self {
+        Self {
+            steps,
+            passed: 0,
+            failed: Vec::new(),
+        }
     }
 
-    fn check(&mut self, ok: bool, what: impl Display) {
+    pub(crate) fn step(&self, n: u32, title: &str) {
+        println!("\n[{n}/{}] {title}", self.steps);
+    }
+
+    pub(crate) fn check(&mut self, ok: bool, what: impl Display) {
         if ok {
             println!("  [ok]   {what}");
             self.passed += 1;
@@ -57,13 +66,13 @@ impl Report {
         }
     }
 
-    fn note(&self, what: impl Display) {
+    pub(crate) fn note(&self, what: impl Display) {
         println!("         {what}");
     }
 }
 
 /// Retry `probe` every 100 ms until it yields `Some`, or give up.
-async fn wait_for<T, F, Fut>(timeout: Duration, mut probe: F) -> Option<T>
+pub(crate) async fn wait_for<T, F, Fut>(timeout: Duration, mut probe: F) -> Option<T>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Option<T>>,
@@ -121,7 +130,7 @@ pub async fn run(args: DemoArgs) -> anyhow::Result<ExitCode> {
         dir.display()
     );
     let started = Instant::now();
-    let mut r = Report::default();
+    let mut r = Report::new(10);
 
     // Short lease and backoff so failures recover in seconds, not minutes.
     let mut cluster = Cluster::new(

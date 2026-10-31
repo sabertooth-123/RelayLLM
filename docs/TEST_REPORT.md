@@ -1,16 +1,17 @@
-﻿# Test report: v0.1.0
+﻿# Test report: v0.1.0 + v0.2 workflows
 
 ## Latest run
 
 | | |
 |---|---|
 | Command | `cargo test --workspace` (debug build) |
-| Result | **138 passed, 0 failed**, 1 ignored (an `ignore`-marked doc example in `handler.rs`) |
-| Wall time | 57 s (already compiled) |
+| Result | **248 passed, 0 failed**, 1 ignored (an `ignore`-marked doc example in `handler.rs`). v0.1 + dashboard: 138; v0.2 workflows: 110 |
+| Wall time | 96 s (already compiled; includes both process-level demos) |
 | Lint | `cargo fmt --all --check` clean · `cargo clippy --workspace --all-targets -- -D warnings` clean |
 | Dashboard | `npm test`: 13 reducer tests pass (vitest) · `npm run build`: `tsc --noEmit` clean, bundle builds · `npm audit`: 0 vulnerabilities |
 | Dashboard, end to end | Real coordinator (`--dev-controls`, 6 s lease) + 3 real workers, driven in a browser: empty and unreachable states; 8 jobs submitted from the UI, each failing attempt 1 and succeeding on attempt 2 (UI counts and `seq` equal a fresh snapshot: 0 duplicates, 0 stale, 0 resyncs); dev lease expiry (2 jobs → retrying, worker shown idle); a worker process killed (shown *unavailable* after one lease, *disconnected* after three); page reload (state rebuilt from the snapshot); coordinator stopped (banner, every worker *unknown*) and restarted (new epoch, one resync, durable counts restored); 375 px width without horizontal scroll |
 | Environment | Windows 11 Home 10.0.26200, Intel64 Family 6 Model 183 (20 logical CPUs), rustc/cargo 1.99.1 |
+| Workflow demo | `relay demo-workflow`: 18/18 checks, 17.4 s. Research workflow (plan → 3 parallel branches → aggregate → 8 s timer → final) through **two hard coordinator kills**: mid fan-out and during the timer. Completed activities ran once, the in-flight branch recovered, the retrying branch kept its retry, the timer kept its deadline and fired once, every activity was scheduled exactly once |
 | Also run | `scripts/demo.ps1` (16/16 demo checks, then the suite: all pass) and `scripts/demo-compose.ps1` (15/15 checks against Docker Compose). Both under **Windows PowerShell 5.1** |
 
 Not run: CI on GitHub Actions (no remote yet) and Linux. The workflow
@@ -20,9 +21,9 @@ in `.github/workflows/ci.yml` runs the same commands on Ubuntu and Windows.
 
 | Test binary | Tests | What it covers |
 |---|---|---|
-| `relay-core` unit | 26 | state machine table, validation, fingerprints, retry backoff math, monotonic clock |
+| `relay-core` unit | 66 | state machine table, validation, fingerprints, retry backoff math, monotonic clock; **workflows (40)**: definition validation, `fold` over normal and impossible histories, `decide` (fan-out, fail-fast, timers, signals, inputs), replay determinism, event encoding, start requests, the step view |
 | `relay-server` unit | 5 | active-state list vs state machine; clock-jump detector; one writer connection + read-only reader pool; event bus `seq` contiguity, bounded ring, per-bus epoch |
-| `relay-worker` unit | 4 | mock handler determinism and scripted failures; backoff jitter |
+| `relay-worker` unit | 5 | mock handler determinism, scripted failures, `inputs` (deterministic, not echoed); backoff jitter |
 | `relay-cli` unit | 8 | config validation (all errors at once, warnings, `--dev-controls` needs loopback); benchmark percentiles |
 | `relay-server/tests/store.rs` | 7 | persistence across reopen, idempotency, capacity, durability pragmas |
 | `…/api.rs` | 6 | HTTP contract and error codes, restart over HTTP |
@@ -35,12 +36,43 @@ in `.github/workflows/ci.yml` runs the same commands on Ubuntu and Windows.
 | `…/workers_api.rs` | 2 | worker protocol over raw HTTP |
 | `…/dashboard.rs` | 8 | one event per committed transition, in order, contiguous `seq`; nothing for rejected/stale/replayed calls; `lease_expired` matches the committed row; dev expiry scoped to one worker; snapshot hides payload/result/key; SSE `hello` → events → visible `ping`; dev route `404` unless enabled |
 | `…/multi_worker.rs` | 12 | real `Worker` loops: concurrency, retries, lost responses, heartbeats, cancel, timeouts, oversized results |
-| `relay-worker/tests/openai.rs` | 7 | `chat` handler against a fake endpoint: mapping, auth, error classification |
 | `relay-cli/tests/cli_errors.rs` | 5 | real binary: invalid config/input, unusable DB path, unreachable coordinator |
 | `relay-cli/tests/process_failures.rs` | 3 | real processes, hard kills: worker kill, coordinator kill + restart, long job via heartbeats |
 | `relay-cli/tests/demo.rs` | 1 | the full `relay demo` (all checks) |
+| `relay-server/tests/workflow_schema.rs` | 4 | migration 0005 rejects 30+ impossible rows/histories; append-only; every uniqueness rule |
+| `…/workflows.rs` | 11 | sequential run on ordinary jobs; restart after completion / with activity in flight; duplicate and stale reports append nothing; idempotent start; full-queue backoff; concurrent decision passes; isolation; corrupt-history quarantine; clock floor; **completion ↔ event atomicity (fault injection)** |
+| `…/workflow_failures.rs` | 12 | retry inside the job; exhaustion via `fail()` and the reaper; lease recovery fences the old worker; direct job cancel; fail-fast cancels siblings; restart mid-retry; **atomicity of fail, reap, cancel and fail-fast (fault injection)** |
+| `…/workflow_parallel.rs` | 7 | fan-out/fan-in; concurrent branch completions; restart mid fan-out; retrying branch; fan-out wider than capacity; oversized inputs; end to end on real worker loops |
+| `…/workflow_timers.rs` | 8 | deadline; restart keeps it; overdue fires once; clock floor ignores deadlines; back-to-back timers; decider first pass, nudges, firing |
+| `…/workflow_signals.rs` | 9 | gate; early signal; survives restart; idempotent retry vs. conflict; invalid signals; finished runs; concurrent deliveries; atomicity; nudge |
+| `…/workflow_cancel.rs` | 7 | cancel mid fan-out; during sleep/signal wait; idempotency; **cancel vs. completion race (both orders observed)**; cancel vs. unseen failure; restart; atomicity |
+| `…/workflow_api.rs` | 7 | HTTP contract and every error code; lost start response (fault injection); full run through the client with the decider and real workers; metrics |
+| `relay-worker/tests/openai.rs` (+1) | 8 | … plus `inputs` as a context block |
+| `relay-cli/tests/workflow_cli.rs` | 2 | every `relay workflow` subcommand against a real coordinator; bad definition file |
+| `relay-cli/tests/demo_workflow.rs` | 1 | the full `relay demo-workflow` (two coordinator kills, all checks) |
 
-## The 14 required scenarios
+## v0.2: the 15 required workflow tests
+
+| # | Requirement | Tests |
+|---|---|---|
+| 1 | Basic sequential workflow | `workflows::a_sequential_workflow_runs_end_to_end_through_ordinary_jobs` |
+| 2 | Parallel fan-out/fan-in | `workflow_parallel::branches_fan_out_together_and_fan_in_only_when_all_are_done`, `…the_research_workflow_runs_on_real_workers_with_the_mock_handler` |
+| 3 | Coordinator restart after activity completion | `workflows::a_restart_between_completion_and_decision_resumes_without_rerunning`, demo step 4–5 |
+| 4 | Coordinator restart with activities in flight | `workflows::a_restart_with_the_activity_in_flight_keeps_the_lease_semantics`, `workflow_parallel::a_restart_mid_fan_out_keeps_each_branch_where_it_was`, demo step 5 |
+| 5 | Replay does not repeat completed activities | core `replay_never_reschedules_completed_activities`; `job_attempts` counts in tests 3–4 and the demo |
+| 6 | Timer survives restart | `workflow_timers::a_timer_survives_a_restart_with_its_original_deadline`, `…an_overdue_timer_fires_once_on_the_first_pass_after_downtime`, demo step 6 |
+| 7 | Signal survives restart | `workflow_signals::an_acknowledged_signal_survives_a_restart` |
+| 8 | Duplicate signal behavior | `workflow_signals::a_repeated_signal_is_idempotent_and_a_different_one_conflicts`, `…concurrent_deliveries_set_the_latch_exactly_once` |
+| 9 | Stale activity completion stays fenced | `workflow_failures::an_expired_lease_with_attempts_left_recovers_and_fences_the_old_worker`, `workflows::duplicate_and_stale_completions_append_nothing` |
+| 10 | Activity retry | `workflow_failures::a_retryable_failure_retries_the_same_job_without_touching_the_history`, demo (branch c) |
+| 11 | Retry exhaustion fails the workflow | `workflow_failures::exhausting_retries_fails_the_activity_and_then_the_run`, `…an_expired_last_lease_fails_the_activity_through_the_reaper` |
+| 12 | Cancellation while waiting | `workflow_cancel::cancelling_a_sleeping_or_waiting_run_needs_no_jobs_and_stops_it` |
+| 13 | Cancellation/completion race | `workflow_cancel::workflow_cancel_racing_activity_completion_has_exactly_one_winner` (15/15 split; fails if either order never occurs) |
+| 14 | Workflow event ordering | seq/at checks in `workflows` sequential test, `workflow_parallel::concurrent_branch_completions_each_get_their_own_event`, core framing tests, demo step 8 |
+| 15 | Two concurrent runs stay isolated | `workflows::two_runs_stay_isolated`, core `two_runs_of_one_definition_are_independent` |
+| + | Central invariant: terminal job transition ↔ workflow event atomic | fault injection in `workflows`, `workflow_failures` (×4), `workflow_signals`, `workflow_cancel`; mutation-checked (a non-atomic hook fails it) |
+
+## The 14 required scenarios (v0.1)
 
 | # | Requirement | Tests |
 |---|---|---|

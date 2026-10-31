@@ -15,7 +15,8 @@ use relay_core::job::{InvalidTransition, Job, JobId, JobState};
 use relay_core::retry::RetryPolicy;
 use relay_core::submission::NewJob;
 use sqlx::sqlite::{
-    SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow, SqliteSynchronous,
+    SqliteConnectOptions, SqliteConnection, SqliteJournalMode, SqlitePoolOptions, SqliteRow,
+    SqliteSynchronous,
 };
 use sqlx::{Row, SqlitePool};
 
@@ -42,14 +43,20 @@ mod claims;
 mod dashboard;
 mod leases;
 mod workers;
+mod workflows;
 
 use crate::events::EventBus;
+use relay_core::workflow::{WorkflowId, WorkflowLimits, WorkflowState};
 
 pub use cancel::{CANCELLED_MESSAGE, CancelOutcome};
 pub use claims::ReportOutcome;
 pub use dashboard::DashboardView;
 pub use leases::{ReapedJob, wall_clock_jumped};
 pub use workers::MetricsSnapshot;
+pub use workflows::{
+    CancelWorkflowOutcome, DecidePass, SignalOutcome, StartOutcome, WORKFLOW_CANCELLED_MESSAGE,
+    WorkflowMetrics, WorkflowRun,
+};
 
 // `Database` and `Migrate` don't repeat their source in the message: error
 // reporters that walk the `source()` chain (anyhow's `{:#}`) print it anyway,
@@ -85,6 +92,27 @@ pub enum StoreError {
     QueueFull { capacity: u64 },
     #[error("idempotency key {key:?} is already bound to job {existing} with a different request")]
     IdempotencyConflict { key: String, existing: JobId },
+    #[error(
+        "idempotency key {key:?} is already bound to workflow {existing} with a different request"
+    )]
+    WorkflowIdempotencyConflict { key: String, existing: WorkflowId },
+    #[error("workflow {0} not found")]
+    WorkflowNotFound(WorkflowId),
+    #[error("workflow {workflow} is already {state}")]
+    WorkflowFinished {
+        workflow: WorkflowId,
+        state: WorkflowState,
+    },
+    #[error("workflow {workflow} has no wait_signal step for {name:?}")]
+    UnknownSignal { workflow: WorkflowId, name: String },
+    /// `wait_signal` is a one-shot latch: this name was already delivered
+    /// with a different payload.
+    #[error(
+        "signal {name:?} was already delivered to workflow {workflow} with a different payload"
+    )]
+    SignalConflict { workflow: WorkflowId, name: String },
+    #[error("signal payload is {actual} bytes; the limit is {max}")]
+    SignalTooLarge { actual: usize, max: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +128,9 @@ pub struct StoreOptions {
     /// the time a worker needs to notice its own timeout and report it.
     pub deadline_grace: Duration,
     pub durability: Durability,
+    /// Definition limits, and the job limits activities are validated
+    /// against. The coordinator keeps `submission` equal to its API limits.
+    pub workflow: WorkflowLimits,
 }
 
 impl Default for StoreOptions {
@@ -110,6 +141,7 @@ impl Default for StoreOptions {
             retry: RetryPolicy::default(),
             deadline_grace: Duration::from_secs(30),
             durability: Durability::Full,
+            workflow: WorkflowLimits::default(),
         }
     }
 }
@@ -178,6 +210,8 @@ pub struct Store {
     /// Published to after every committed state change (never before commit,
     /// never for a rolled-back transaction).
     events: EventBus,
+    /// Nudges the workflow decider after a commit made a run due.
+    decider_wake: Arc<tokio::sync::Notify>,
 }
 
 impl Store {
@@ -213,6 +247,7 @@ impl Store {
             writer,
             reader,
             events: EventBus::new(),
+            decider_wake: Arc::default(),
             clock,
             options,
         })
@@ -227,9 +262,14 @@ impl Store {
     /// floor for the clock, so a wall clock that went backwards while the
     /// coordinator was down can't stamp rows "before" existing ones.
     pub async fn latest_timestamp(&self) -> Result<Option<Timestamp>, StoreError> {
+        // Only timestamps that were *written* as "now". Future deadlines
+        // (lease expiry, workflow wake_at, timer fire_at) must not raise the
+        // floor, or a long sleep would push the clock days ahead.
         Ok(sqlx::query_scalar(
             "SELECT MAX(m) FROM (SELECT MAX(updated_at) AS m FROM jobs
-                                 UNION ALL SELECT MAX(last_seen_at) FROM workers)",
+                                 UNION ALL SELECT MAX(last_seen_at) FROM workers
+                                 UNION ALL SELECT MAX(updated_at) FROM workflow_runs
+                                 UNION ALL SELECT MAX(at) FROM workflow_events)",
         )
         .fetch_one(&self.reader)
         .await?)
@@ -263,29 +303,13 @@ impl Store {
     }
 
     pub async fn submit(&self, job: NewJob) -> Result<SubmitOutcome, StoreError> {
-        let id = JobId::generate();
         let now = self.clock.now_ms();
-        let inserted = sqlx::query(INSERT_JOB)
-            .bind(id.to_string())
-            .bind(job.kind.as_str())
-            .bind(job.payload.to_string())
-            .bind(job.request_fingerprint.as_str())
-            .bind(job.idempotency_key.as_deref())
-            .bind(JobState::Queued.as_str())
-            .bind(i64::from(job.max_attempts))
-            .bind(saturating_i64(job.timeout_ms))
-            .bind(now) // available_at
-            .bind(now) // created_at
-            .bind(now) // updated_at
-            .bind(ACTIVE_STATES[0].as_str())
-            .bind(ACTIVE_STATES[1].as_str())
-            .bind(ACTIVE_STATES[2].as_str())
-            .bind(saturating_i64(self.options.max_active_jobs))
-            .fetch_optional(&self.writer)
-            .await?;
+        let inserted = {
+            let mut conn = self.writer.acquire().await?;
+            insert_job(&mut conn, &job, now, self.options.max_active_jobs).await?
+        };
 
-        if let Some(row) = inserted {
-            let created = job_from_row(&row)?;
+        if let Some(created) = inserted {
             self.events.publish(
                 now,
                 EventKind::JobSubmitted {
@@ -350,6 +374,38 @@ impl Store {
             })
             .collect()
     }
+}
+
+/// Insert a new `queued` job unless the queue is at capacity (`None`) or the
+/// idempotency key exists (`None` too; the caller tells them apart). Takes a
+/// connection so it can run inside an outer transaction (the workflow
+/// decider schedules activities this way).
+pub(crate) async fn insert_job(
+    conn: &mut SqliteConnection,
+    job: &NewJob,
+    now: Timestamp,
+    max_active_jobs: u64,
+) -> Result<Option<Job>, StoreError> {
+    let id = JobId::generate();
+    let row = sqlx::query(INSERT_JOB)
+        .bind(id.to_string())
+        .bind(job.kind.as_str())
+        .bind(job.payload.to_string())
+        .bind(job.request_fingerprint.as_str())
+        .bind(job.idempotency_key.as_deref())
+        .bind(JobState::Queued.as_str())
+        .bind(i64::from(job.max_attempts))
+        .bind(saturating_i64(job.timeout_ms))
+        .bind(now) // available_at
+        .bind(now) // created_at
+        .bind(now) // updated_at
+        .bind(ACTIVE_STATES[0].as_str())
+        .bind(ACTIVE_STATES[1].as_str())
+        .bind(ACTIVE_STATES[2].as_str())
+        .bind(saturating_i64(max_active_jobs))
+        .fetch_optional(conn)
+        .await?;
+    row.as_ref().map(job_from_row).transpose()
 }
 
 fn saturating_i64(value: u64) -> i64 {

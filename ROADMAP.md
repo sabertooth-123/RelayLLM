@@ -67,6 +67,18 @@ Each phase leaves the workspace building, formatted, Clippy-clean and tested.
 - [x] License (MIT OR Apache-2.0), CHANGELOG, crate metadata, `cargo package --workspace`, release checklist
 - [ ] 👤 Repository, tag `v0.1.0`, GitHub release (see `docs/RELEASE_CHECKLIST.md`)
 
+## v0.2: Durable workflows ✅ (2026-10-30/31; design `docs/WORKFLOWS_DESIGN.md`)
+- [x] A: audit + design (stateless decider, same-transaction events, 2 tables)
+- [x] B: migration 0005, pure `fold`/`decide`, impossible-history tests
+- [x] C: store + decider transaction; atomicity fault injection
+- [x] D: hooks in fail/reaper/cancel; fail-fast; benchmark check (no measurable hook cost)
+- [x] E: parallel fan-out/fan-in, `inputs` in handlers; fan-out livelock fixed
+- [x] F: durable timers + decider task (first pass, nudges)
+- [x] G: signals (one-shot latch, conflict, early arrival)
+- [x] H: workflow cancel; cancel/complete race exercised both ways
+- [x] I: API, client, CLI, `relay demo-workflow`, metrics, docs
+- Not done (v0.2 scope cuts): workflow list endpoint, dashboard workflow view, content-addressed result store, signal timeouts, versioning of running definitions
+
 ## Deliberately out of scope for v0.1
 - Multiple coordinators / consensus (single coordinator is the documented SPOF)
 - Authentication (trusted local network only)

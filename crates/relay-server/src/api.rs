@@ -23,7 +23,7 @@ use crate::dashboard_api;
 use crate::error::ApiError;
 use crate::observe::{HttpMetrics, observe};
 use crate::store::{CancelOutcome, Store, SubmitOutcome};
-use crate::worker_api;
+use crate::{worker_api, workflow_api};
 
 #[derive(Debug, Clone)]
 pub struct Limits {
@@ -125,6 +125,14 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/workers/{worker_id}/claims", post(worker_api::claim))
         .route("/v1/dashboard/snapshot", get(dashboard_api::snapshot))
         .route("/v1/events", get(dashboard_api::events))
+        .route("/v1/workflows", post(workflow_api::start))
+        .route("/v1/workflows/{id}", get(workflow_api::get))
+        .route("/v1/workflows/{id}/history", get(workflow_api::history))
+        .route(
+            "/v1/workflows/{id}/signals/{name}",
+            post(workflow_api::signal),
+        )
+        .route("/v1/workflows/{id}/cancel", post(workflow_api::cancel))
         // route_layer: runs after routing, so the route template is known.
         .route_layer(middleware::from_fn_with_state(state.clone(), observe))
         .layer(DefaultBodyLimit::max(body_limit))

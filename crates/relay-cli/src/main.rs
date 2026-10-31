@@ -5,8 +5,10 @@ mod client_cmds;
 mod cluster;
 mod coordinator;
 mod demo;
+mod demo_workflow;
 mod runtime;
 mod worker_cmd;
+mod workflow_cmds;
 
 use std::process::ExitCode;
 
@@ -50,6 +52,8 @@ enum Command {
     Health,
     /// Run the end-to-end failure-recovery demo on a local cluster.
     Demo(demo::DemoArgs),
+    /// Run a durable workflow through two coordinator crashes, with checks.
+    DemoWorkflow(demo_workflow::DemoWorkflowArgs),
     /// Benchmark throughput, latency and recovery on local clusters.
     Bench(bench::BenchArgs),
     /// Show every attempt of a job: which worker ran it and how it ended.
@@ -60,6 +64,9 @@ enum Command {
     Status(client_cmds::StatusArgs),
     /// Show a job's result, optionally waiting for it to finish.
     Result(client_cmds::ResultArgs),
+    /// Durable multi-step workflows: start, status, history, signal, cancel.
+    #[command(subcommand)]
+    Workflow(workflow_cmds::WorkflowCommand),
 }
 
 #[tokio::main]
@@ -72,11 +79,13 @@ async fn main() -> ExitCode {
         Command::Workers => client_cmds::workers(&cli.server, cli.json).await,
         Command::Health => client_cmds::health(&cli.server).await,
         Command::Demo(args) => demo::run(args).await,
+        Command::DemoWorkflow(args) => demo_workflow::run(args).await,
         Command::Bench(args) => bench::run(args).await,
         Command::Attempts(args) => client_cmds::attempts(&cli.server, cli.json, args).await,
         Command::Submit(args) => client_cmds::submit(&cli.server, cli.json, args).await,
         Command::Status(args) => client_cmds::status(&cli.server, cli.json, args).await,
         Command::Result(args) => client_cmds::result(&cli.server, cli.json, args).await,
+        Command::Workflow(command) => workflow_cmds::run(&cli.server, cli.json, command).await,
     };
     match outcome {
         Ok(code) => code,

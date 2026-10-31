@@ -13,6 +13,7 @@ use relay_core::api::{ErrorBody, ErrorDetail};
 use relay_core::job::{JobId, JobState, ParseJobIdError};
 use relay_core::submission::ValidationError;
 use relay_core::worker::WorkerValidationError;
+use relay_core::workflow::{ParseWorkflowIdError, StartError, WorkflowId, WorkflowState};
 
 use crate::store::StoreError;
 
@@ -51,6 +52,29 @@ pub enum ApiError {
     /// was dropped, so a retry must reuse the same idempotency key.
     #[error("request timed out after {0} ms; the operation may or may not have been applied")]
     RequestTimeout(u128),
+    #[error(transparent)]
+    InvalidWorkflow(#[from] StartError),
+    #[error(transparent)]
+    InvalidWorkflowId(#[from] ParseWorkflowIdError),
+    #[error("workflow {0} not found")]
+    WorkflowNotFound(WorkflowId),
+    #[error(
+        "idempotency key {key:?} is already bound to workflow {existing} with a different request"
+    )]
+    WorkflowIdempotencyConflict { key: String, existing: WorkflowId },
+    #[error("workflow {workflow} is already {state}")]
+    WorkflowFinished {
+        workflow: WorkflowId,
+        state: WorkflowState,
+    },
+    #[error("workflow {workflow} has no wait_signal step for {name:?}")]
+    UnknownSignal { workflow: WorkflowId, name: String },
+    #[error(
+        "signal {name:?} was already delivered to workflow {workflow} with a different payload          (wait_signal is a one-shot latch)"
+    )]
+    SignalConflict { workflow: WorkflowId, name: String },
+    #[error("signal payload is {actual} bytes; the limit is {max}")]
+    SignalTooLarge { actual: usize, max: usize },
     #[error("internal error")]
     Internal,
 }
@@ -70,6 +94,16 @@ impl ApiError {
             ApiError::StaleAttempt { .. } => (StatusCode::CONFLICT, "stale_attempt"),
             ApiError::NotCancellable { .. } => (StatusCode::CONFLICT, "not_cancellable"),
             ApiError::RequestTimeout(_) => (StatusCode::GATEWAY_TIMEOUT, "request_timeout"),
+            ApiError::InvalidWorkflow(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid_request"),
+            ApiError::InvalidWorkflowId(_) => (StatusCode::BAD_REQUEST, "invalid_workflow_id"),
+            ApiError::WorkflowNotFound(_) => (StatusCode::NOT_FOUND, "workflow_not_found"),
+            ApiError::WorkflowIdempotencyConflict { .. } => {
+                (StatusCode::CONFLICT, "idempotency_conflict")
+            }
+            ApiError::WorkflowFinished { .. } => (StatusCode::CONFLICT, "workflow_finished"),
+            ApiError::UnknownSignal { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "unknown_signal"),
+            ApiError::SignalConflict { .. } => (StatusCode::CONFLICT, "signal_conflict"),
+            ApiError::SignalTooLarge { .. } => (StatusCode::PAYLOAD_TOO_LARGE, "signal_too_large"),
             ApiError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         }
     }
@@ -96,6 +130,20 @@ impl From<StoreError> for ApiError {
                 ApiError::NotCancellable { job_id, state }
             }
             StoreError::JobNotFound(id) => ApiError::JobNotFound(id),
+            StoreError::WorkflowNotFound(id) => ApiError::WorkflowNotFound(id),
+            StoreError::WorkflowIdempotencyConflict { key, existing } => {
+                ApiError::WorkflowIdempotencyConflict { key, existing }
+            }
+            StoreError::WorkflowFinished { workflow, state } => {
+                ApiError::WorkflowFinished { workflow, state }
+            }
+            StoreError::UnknownSignal { workflow, name } => {
+                ApiError::UnknownSignal { workflow, name }
+            }
+            StoreError::SignalConflict { workflow, name } => {
+                ApiError::SignalConflict { workflow, name }
+            }
+            StoreError::SignalTooLarge { actual, max } => ApiError::SignalTooLarge { actual, max },
             StoreError::StaleAttempt {
                 job_id,
                 attempt,

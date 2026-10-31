@@ -7,16 +7,19 @@
 //! { "prompt": "text",            // required
 //!   "delay_ms": 250,             // optional; overrides the handler default (max 60000)
 //!   "fail_attempts": 2,          // optional; attempts 1..=2 fail, attempt 3 succeeds
-//!   "fail_kind": "retryable" }   // optional; "retryable" (default) or "permanent"
+//!   "fail_kind": "retryable",    // optional; "retryable" (default) or "permanent"
+//!   "inputs": { "plan": ... } }  // optional; filled by a workflow (earlier results)
 //! ```
 //!
-//! The output depends only on the prompt, never on which worker or attempt
-//! produced it, so a job run twice yields identical results.
+//! The output depends only on the prompt and the inputs, never on which
+//! worker or attempt produced it, so a job run twice yields identical
+//! results. With inputs, it also reports *which* inputs it saw and their
+//! size. It doesn't echo them, so results don't grow along a workflow chain.
 
 use std::time::Duration;
 
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::handler::{BoxFuture, HandlerError, JobContext, JobHandler};
 
@@ -43,6 +46,8 @@ struct MockPayload {
     fail_attempts: u32,
     #[serde(default)]
     fail_kind: FailKind,
+    #[serde(default)]
+    inputs: Option<Map<String, Value>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -74,24 +79,31 @@ impl JobHandler for MockLlmHandler {
                     FailKind::Permanent => HandlerError::permanent(message),
                 });
             }
-            Ok(complete(&payload.prompt))
+            Ok(complete(&payload.prompt, payload.inputs.as_ref()))
         })
     }
 }
 
-/// Deterministic "completion": a function of the prompt only.
-fn complete(prompt: &str) -> Value {
+/// Deterministic "completion": a function of the prompt and inputs only.
+fn complete(prompt: &str, inputs: Option<&Map<String, Value>>) -> Value {
     let words: Vec<&str> = prompt.split_whitespace().collect();
     let reversed: Vec<&str> = words.iter().rev().copied().collect();
     let completion = format!("[mock-llm] {}", reversed.join(" "));
-    json!({
+    let mut out = json!({
         "model": "mock-llm-1",
         "completion": completion,
         "usage": {
             "prompt_tokens": words.len(),
             "completion_tokens": words.len() + 1,
         },
-    })
+    });
+    if let Some(inputs) = inputs {
+        // serde_json's Map is ordered by key, so this is deterministic.
+        let seen: Vec<&String> = inputs.keys().collect();
+        out["inputs_seen"] = json!(seen);
+        out["context_bytes"] = json!(Value::Object(inputs.clone()).to_string().len());
+    }
+    out
 }
 
 #[cfg(test)]
@@ -146,6 +158,39 @@ mod tests {
 
         let permanent = json!({"prompt": "x", "fail_attempts": 1, "fail_kind": "permanent"});
         assert!(!handler.run(ctx(1, permanent)).await.unwrap_err().retryable);
+    }
+
+    #[tokio::test]
+    async fn inputs_are_reported_deterministically_but_not_echoed() {
+        let handler = MockLlmHandler::new(Duration::ZERO);
+        let big = "x".repeat(5_000);
+        let a = handler
+            .run(ctx(
+                1,
+                json!({"prompt": "merge", "inputs": {"b": {"t": big}, "a": 1}}),
+            ))
+            .await
+            .unwrap();
+        let b = handler
+            .run(ctx(
+                2,
+                json!({"prompt": "merge", "inputs": {"a": 1, "b": {"t": big}}}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            a, b,
+            "same inputs in another order, another attempt: same output"
+        );
+        assert_eq!(a["inputs_seen"], json!(["a", "b"]));
+        assert!(a["context_bytes"].as_u64().unwrap() > 5_000);
+        assert!(a.to_string().len() < 400, "inputs are not echoed: {a}");
+        // Without inputs, the v0.1 output is unchanged.
+        let plain = handler
+            .run(ctx(1, json!({"prompt": "merge"})))
+            .await
+            .unwrap();
+        assert!(plain.get("inputs_seen").is_none());
     }
 
     #[tokio::test]

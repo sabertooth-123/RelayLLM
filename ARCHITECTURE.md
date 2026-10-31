@@ -477,3 +477,16 @@ table. Design:
 Cost on the hot path: one mutex acquisition and a `broadcast::send` per
 committed transition. Heartbeats publish too (the dashboard hides them by
 default).
+
+## 10. Durable workflows (v0.2)
+
+Specified in full in [`docs/WORKFLOWS_DESIGN.md`](docs/WORKFLOWS_DESIGN.md).
+In one paragraph: a run is an immutable definition plus an append-only
+event history (`workflow_runs`, `workflow_events`). The pure
+`relay-core::workflow::{fold, decide}` turn history into commands. A
+single decider task executes them in one `BEGIN IMMEDIATE` transaction per
+run. Activities are ordinary jobs, and every terminal job transition
+(complete, fail, reap, cancel) appends its workflow event in that same
+transaction. That turns the classic "job done but workflow didn't hear"
+crash window into an impossibility. Restart recovery is the decider's first
+pass.

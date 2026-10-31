@@ -18,6 +18,7 @@ use relay_core::job::{AttemptOutcome, Job, JobId, JobState};
 use serde_json::Value;
 use sqlx::{Row, Sqlite, Transaction};
 
+use super::workflows::{ActivityOutcome, on_activity_terminal};
 use super::{Store, StoreError, duration_ms, job_from_row, retry_at};
 
 /// Claim the oldest eligible job whose kind the worker registered for.
@@ -211,7 +212,18 @@ impl Store {
             Some(row) => {
                 let job = job_from_row(&row)?;
                 finish_attempt(&mut tx, job_id, attempt, now, outcome, None).await?;
+                // Same transaction: a workflow can't miss its activity's success.
+                let woke = on_activity_terminal(
+                    &mut tx,
+                    self.clock.as_ref(),
+                    job_id,
+                    ActivityOutcome::Completed,
+                )
+                .await?;
                 tx.commit().await?;
+                if woke {
+                    self.nudge_decider();
+                }
                 self.events.publish(
                     now,
                     EventKind::JobSucceeded {
@@ -262,7 +274,22 @@ impl Store {
             Some(row) => {
                 let job = job_from_row(&row)?;
                 finish_attempt(&mut tx, job_id, attempt, now, outcome, Some(error)).await?;
+                // `retry_waiting` is still the same activity; only a terminal
+                // failure reaches the workflow, in this same transaction.
+                let mut woke = false;
+                if job.state == JobState::Failed {
+                    woke = on_activity_terminal(
+                        &mut tx,
+                        self.clock.as_ref(),
+                        job_id,
+                        ActivityOutcome::Failed(error.to_owned()),
+                    )
+                    .await?;
+                }
                 tx.commit().await?;
+                if woke {
+                    self.nudge_decider();
+                }
                 let from = Some(JobState::Running);
                 let summary = job.summary();
                 self.events.publish(

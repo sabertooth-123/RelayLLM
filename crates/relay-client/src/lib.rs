@@ -8,8 +8,14 @@ use relay_core::api::{
     SubmitJobRequest, SubmitJobResponse, WorkerView,
 };
 use relay_core::job::JobId;
+use relay_core::workflow::{
+    CancelWorkflowRequest, SignalRequest, SignalResponse, StartWorkflowRequest,
+    StartWorkflowResponse, WorkflowHistoryView, WorkflowId, WorkflowView,
+};
 use reqwest::{RequestBuilder, Response};
+use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
@@ -313,6 +319,122 @@ impl RelayClient {
                 .json(request),
         )
         .await
+    }
+
+    // ---- Workflows. Every write is idempotent, so ambiguous failures are
+    // retried (see `post_retrying`). ----
+
+    /// Start a workflow run. Like [`submit`](Self::submit), a call without
+    /// an idempotency key gets a generated one shared by all its retries, so
+    /// a lost response never starts a second run.
+    pub async fn start_workflow(
+        &self,
+        request: &StartWorkflowRequest,
+    ) -> Result<StartWorkflowResponse, ClientError> {
+        let mut request = request.clone();
+        let generated_key = request.idempotency_key.is_none();
+        if generated_key {
+            request.idempotency_key = Some(format!("auto-{}", WorkflowId::generate()));
+        }
+        let mut response: StartWorkflowResponse =
+            self.post_retrying("/v1/workflows", &request).await?;
+        response.created |= generated_key;
+        Ok(response)
+    }
+
+    pub async fn workflow(&self, id: WorkflowId) -> Result<WorkflowView, ClientError> {
+        self.send(self.http.get(self.url(&format!("/v1/workflows/{id}"))))
+            .await
+    }
+
+    pub async fn workflow_history(
+        &self,
+        id: WorkflowId,
+    ) -> Result<WorkflowHistoryView, ClientError> {
+        self.send(
+            self.http
+                .get(self.url(&format!("/v1/workflows/{id}/history"))),
+        )
+        .await
+    }
+
+    /// Deliver a signal. A one-shot latch: retrying the same payload is
+    /// safe (`recorded: false` the second time); a different payload for an
+    /// already-delivered name is `409 signal_conflict`.
+    pub async fn signal_workflow(
+        &self,
+        id: WorkflowId,
+        name: &str,
+        payload: Value,
+    ) -> Result<SignalResponse, ClientError> {
+        self.post_retrying(
+            &format!("/v1/workflows/{id}/signals/{name}"),
+            &SignalRequest { payload },
+        )
+        .await
+    }
+
+    /// Cancel a run and its outstanding activities. Idempotent.
+    pub async fn cancel_workflow(
+        &self,
+        id: WorkflowId,
+        reason: Option<String>,
+    ) -> Result<WorkflowView, ClientError> {
+        self.post_retrying(
+            &format!("/v1/workflows/{id}/cancel"),
+            &CancelWorkflowRequest { reason },
+        )
+        .await
+    }
+
+    /// Poll until the run is no longer `running` or `timeout` elapses, then
+    /// return the last view. Ambiguous errors (a restarting coordinator) are
+    /// retried until the deadline.
+    pub async fn wait_for_workflow(
+        &self,
+        id: WorkflowId,
+        timeout: Duration,
+    ) -> Result<WorkflowView, ClientError> {
+        let deadline = Instant::now() + timeout;
+        let mut delay = Duration::from_millis(200);
+        loop {
+            let outcome = self.workflow(id).await;
+            match &outcome {
+                Ok(view) if view.state.is_terminal() => return outcome,
+                Ok(_) => {}
+                Err(err) if err.is_ambiguous() => {}
+                Err(_) => return outcome,
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return outcome;
+            }
+            tokio::time::sleep(delay.min(remaining)).await;
+            delay = (delay * 2).min(Duration::from_secs(2));
+        }
+    }
+
+    /// POST an idempotent request, retrying ambiguous failures with backoff.
+    async fn post_retrying<B: Serialize, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T, ClientError> {
+        let mut backoff = self.retry.initial_backoff;
+        let mut attempt = 1;
+        loop {
+            match self
+                .send::<T>(self.http.post(self.url(path)).json(body))
+                .await
+            {
+                Err(err) if err.is_ambiguous() && attempt < self.retry.max_attempts => {
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(self.retry.max_backoff);
+                    attempt += 1;
+                }
+                other => return other,
+            }
+        }
     }
 
     fn url(&self, path: &str) -> String {

@@ -151,6 +151,33 @@ arrived): median **40 ms** (`full`) and **61 ms** (`normal`), max 108 ms.
 The `environment.json` files in `experiments/` don't record the code change
 each experiment made; this table does.
 
+## v0.2 check: does the workflow hook slow plain jobs? (2026-10-31)
+
+Since v0.2, every terminal job transition also runs the workflow hook
+(`docs/WORKFLOWS_DESIGN.md` §5): one indexed lookup in `workflow_events`,
+which finds nothing for a plain job. That is the only extra work on the
+plain-job path. The dashboard's event bus (one mutex and one broadcast
+send per transition) landed before it.
+
+A first full `normal` sweep on the v0.2 tree showed 22–46% lower zero-delay
+throughput than the table above. **That was the machine, not the code.**
+Re-running the *unchanged* v0.1 commit on the same day reproduced the
+drop. Same-session A/B/C, `--sqlite-synchronous normal --delay-ms 0 --repeat 5`,
+completed/s median [min–max]:
+
+| build | 1 × 4 | 4 × 4 |
+|---|---|---|
+| `e1b85c3` (v0.1, the table above) | 420 [374–448] | 426 [391–495] |
+| `0a0e627` (+ dashboard event bus) | 377 [353–435] | 397 [363–457] |
+| v0.2 working tree (+ workflow hooks) | 394 [333–454] | 413 [357–431] |
+
+The ranges overlap almost completely, and the middle build is the slowest,
+so the differences are noise. Conclusion: no overhead *larger than about
+10%* is measurable on this machine. A smaller one can't be ruled out. Raw
+data was not committed (it was a check, not a published result).
+Lesson recorded: a benchmark compared across days must re-run its baseline
+in the same session.
+
 ## Caveats
 
 * One machine runs everything, so client, workers and coordinator compete for

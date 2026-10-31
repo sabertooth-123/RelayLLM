@@ -8,7 +8,11 @@ use anyhow::Context;
 use clap::Args;
 use relay_core::clock::{MonotonicClock, SystemClock};
 use relay_core::retry::RetryPolicy;
-use relay_server::{AppState, Durability, Limits, ReaperConfig, Store, StoreOptions, spawn_reaper};
+use relay_core::workflow::WorkflowLimits;
+use relay_server::{
+    AppState, DeciderConfig, Durability, Limits, ReaperConfig, Store, StoreOptions, spawn_decider,
+    spawn_reaper,
+};
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum SyncLevel {
@@ -147,6 +151,10 @@ pub async fn run(args: CoordinatorArgs) -> anyhow::Result<ExitCode> {
     args.validate().finish("coordinator")?;
     let lease = Duration::from_secs(args.lease_secs);
 
+    let limits = Limits {
+        request_timeout: Duration::from_secs(args.request_timeout_secs),
+        ..Limits::default()
+    };
     let options = StoreOptions {
         max_active_jobs: args.max_active_jobs,
         retry: RetryPolicy {
@@ -155,6 +163,12 @@ pub async fn run(args: CoordinatorArgs) -> anyhow::Result<ExitCode> {
         },
         deadline_grace: Duration::from_secs(args.deadline_grace_secs),
         durability: args.sqlite_synchronous.into(),
+        // One source of truth: workflow activities obey the same job limits
+        // as `POST /v1/jobs`.
+        workflow: WorkflowLimits {
+            submission: limits.submission.clone(),
+            ..WorkflowLimits::default()
+        },
         ..StoreOptions::default()
     };
     // A relative path resolves against the current directory, so starting the
@@ -217,6 +231,9 @@ pub async fn run(args: CoordinatorArgs) -> anyhow::Result<ExitCode> {
         );
     }
     let reaper = spawn_reaper(store.clone(), ReaperConfig::for_lease(lease));
+    // Workflow runs: the first pass fires overdue timers and decides runs
+    // that were made due before a crash (docs/WORKFLOWS_DESIGN.md §4.2).
+    let decider = spawn_decider(store.clone(), DeciderConfig::default());
 
     let listener = TcpListener::bind(args.bind)
         .await
@@ -228,10 +245,6 @@ pub async fn run(args: CoordinatorArgs) -> anyhow::Result<ExitCode> {
         "coordinator listening"
     );
 
-    let limits = Limits {
-        request_timeout: Duration::from_secs(args.request_timeout_secs),
-        ..Limits::default()
-    };
     if args.dev_controls {
         warn!("--dev-controls: development failure controls are enabled");
     }
@@ -241,6 +254,7 @@ pub async fn run(args: CoordinatorArgs) -> anyhow::Result<ExitCode> {
     let drain = Duration::from_secs(args.shutdown_drain_secs);
     let served = relay_server::serve(listener, state, shutdown_signal(), drain).await;
     reaper.abort();
+    decider.abort();
     served?;
     // `close` waits for every pooled connection to come back, including one
     // stuck in SQLite's busy wait behind a request the drain deadline already

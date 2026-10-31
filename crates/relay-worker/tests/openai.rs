@@ -127,6 +127,54 @@ async fn messages_system_prompt_and_model_override() {
     );
 }
 
+/// Workflow inputs become a context block on the last user message: the
+/// `completion` text for model results, compact JSON for anything else.
+#[tokio::test]
+async fn workflow_inputs_are_appended_as_context() {
+    let (url, seen) = fake_endpoint(StatusCode::OK, completion("merged")).await;
+    let payload = json!({
+        "system": "Be terse.",
+        "messages": [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+            {"role": "user", "content": "Merge the findings."}
+        ],
+        "inputs": {
+            "research.b": {"model": "m", "completion": "B found y."},
+            "research.a": {"model": "m", "completion": "A found x."},
+            "input": {"topic": "rust"}
+        }
+    });
+    handler(&url, None).run(ctx(payload)).await.unwrap();
+
+    let (_, request) = seen.0.lock().unwrap()[0].clone();
+    assert_eq!(
+        request["messages"][1]["content"], "first question",
+        "earlier turns untouched"
+    );
+    assert_eq!(
+        request["messages"][3]["content"],
+        "Merge the findings.\n\nContext from earlier steps:\
+         \n\n### input\n{\"topic\":\"rust\"}\
+         \n\n### research.a\nA found x.\
+         \n\n### research.b\nB found y."
+    );
+    assert!(
+        request.get("inputs").is_none(),
+        "inputs are not forwarded as a field"
+    );
+
+    // Inputs with only a system message have nowhere to go: permanent.
+    let bad = json!({"messages": [{"role": "assistant", "content": "x"}], "inputs": {"a": 1}});
+    assert!(
+        !handler(&url, None)
+            .run(ctx(bad))
+            .await
+            .unwrap_err()
+            .retryable
+    );
+}
+
 /// Retryable vs. permanent is what keeps the coordinator from either giving
 /// up on a rate limit or burning attempts on a request that can't succeed.
 #[tokio::test]

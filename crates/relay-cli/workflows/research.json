@@ -1,0 +1,14 @@
+{
+  "name": "research",
+  "steps": [
+    { "name": "plan", "activity": { "kind": "mock", "payload": { "prompt": "plan the research", "delay_ms": 500 }, "inputs": ["input"] } },
+    { "name": "research", "parallel": [
+      { "name": "a", "kind": "mock", "payload": { "prompt": "survey prior work", "delay_ms": 300 }, "inputs": ["plan"] },
+      { "name": "b", "kind": "mock", "payload": { "prompt": "run the long experiment", "delay_ms": 6000 }, "inputs": ["plan"] },
+      { "name": "c", "kind": "mock", "payload": { "prompt": "query the flaky source", "delay_ms": 1500, "fail_attempts": 1 }, "inputs": ["plan"], "max_attempts": 3 }
+    ] },
+    { "name": "aggregate", "activity": { "kind": "mock", "payload": { "prompt": "merge the findings" }, "inputs": ["research.a", "research.b", "research.c"] } },
+    { "name": "cooldown", "sleep_ms": 8000 },
+    { "name": "final", "activity": { "kind": "mock", "payload": { "prompt": "write the report" }, "inputs": ["aggregate"] } }
+  ]
+}

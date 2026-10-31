@@ -4,6 +4,49 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - unreleased
+
+Durable multi-step LLM workflows on top of the v0.1 job queue
+(design: `docs/WORKFLOWS_DESIGN.md`).
+
+### Added
+- **Workflows**: declarative definitions with `activity`, `parallel`
+  (fan-out/fan-in, fail-fast), `sleep_ms` (durable timers) and
+  `wait_signal` (one-shot durable latches). Earlier results are passed in
+  with `inputs`. Each activity is an ordinary job, so leases, retries,
+  fencing and cancellation apply unchanged.
+- **Durable event history** per run (migration `0005`): append-only,
+  contiguous `seq`, guarded by `CHECK`s, partial unique indexes and triggers.
+  Every terminal job transition appends its workflow event **in the same
+  transaction**. Fault-injection tests cover `complete`, `fail`, the reaper,
+  direct cancel, fail-fast, signals and workflow cancel.
+- **Pure core** (`relay-core::workflow`): definition validation, `fold`
+  (rejects impossible histories with typed errors) and `decide`. No I/O and
+  no clock, so replay is deterministic and completed activities are never
+  rescheduled.
+- **Decider task** in the coordinator: one task for all runs, an immediate
+  first pass (restart recovery), commit nudges, and sleep until the next
+  timer.
+- **API**: `POST /v1/workflows`, `GET /v1/workflows/{id}` (per-step view),
+  `GET .../history`, `POST .../signals/{name}`, `POST .../cancel`, with typed
+  error codes. `RelayClient` methods; idempotent writes retry ambiguous
+  failures.
+- **CLI**: `relay workflow start|status|history|signal|cancel`, and
+  **`relay demo-workflow`**: a research workflow through two hard
+  coordinator kills, 18 checks (also a test).
+- **Metrics**: `relay_workflow_runs{state}`,
+  `relay_workflow_activity_attempts_total{outcome}`, `relay_workflow_due_runs`.
+- `mock` and `chat` handlers accept `inputs`.
+
+### Fixed during development
+- A full queue no longer livelocks a fan-out wider than the free capacity:
+  branches that fit are scheduled, and the rest a second later.
+
+### Upgrade notes
+- **Upgrade workers before starting workflows that use `inputs`**: a v0.1
+  worker rejects the unknown payload field and fails the activity
+  permanently.
+
 ## [0.1.0] - unreleased
 
 First release: a fault-tolerant, durable job queue for LLM workloads.

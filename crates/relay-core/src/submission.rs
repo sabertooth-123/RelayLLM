@@ -140,6 +140,13 @@ pub fn fingerprint(request: &SubmitJobRequest) -> String {
     format!("{digest:x}")
 }
 
+/// SHA-256 (hex) of any JSON value with object keys sorted recursively. The
+/// same canonical form as [`fingerprint`], for other idempotent requests.
+pub fn canonical_sha256(value: &Value) -> String {
+    let digest = Sha256::digest(canonicalize(value).to_string().as_bytes());
+    format!("{digest:x}")
+}
+
 fn canonicalize(value: &Value) -> Value {
     match value {
         Value::Object(map) => {

@@ -81,6 +81,33 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> Result<impl IntoRe
         snapshot.workers_total - snapshot.workers_live
     );
 
+    let wf = state.store.workflow_metrics().await?;
+    gauge_header(
+        &mut out,
+        "relay_workflow_runs",
+        "Workflow runs by current state.",
+    );
+    for (run_state, n) in &wf.runs_by_state {
+        let _ = writeln!(out, "relay_workflow_runs{{state=\"{run_state}\"}} {n}");
+    }
+    let _ = writeln!(
+        out,
+        "# HELP relay_workflow_activity_attempts_total Finished attempts of workflow activity jobs by outcome (durable). retryable_error and lease_expired are activity retries."
+    );
+    let _ = writeln!(out, "# TYPE relay_workflow_activity_attempts_total counter");
+    for (outcome, n) in &wf.activity_attempts_by_outcome {
+        let _ = writeln!(
+            out,
+            "relay_workflow_activity_attempts_total{{outcome=\"{outcome}\"}} {n}"
+        );
+    }
+    gauge_header(
+        &mut out,
+        "relay_workflow_due_runs",
+        "Workflow runs due for a decision now. Growing values mean the decider is falling behind.",
+    );
+    let _ = writeln!(out, "relay_workflow_due_runs {}", wf.due_runs);
+
     let _ = writeln!(
         out,
         "# HELP relay_http_requests_total HTTP requests by route and status class (resets on restart)."

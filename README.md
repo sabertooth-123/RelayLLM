@@ -9,8 +9,8 @@ with attempt numbers. The point of the project is the distributed-systems
 engineering: durability, idempotency, failure detection, backpressure and
 recovery. LLM calls are just the workload.
 
-> **Status: v0.1.0 release candidate.** All five roadmap phases are done.
-> Remaining steps (repository, tag, publishing) are in
+> **Status:** v0.1.0 release candidate, plus **durable workflows (v0.2,
+> unreleased)**. Release steps are in
 > [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
 
 ![RelayLLM architecture](docs/architecture.svg)
@@ -160,6 +160,46 @@ Risky-but-legal ones (e.g. binding a non-loopback address) log a warning.
 Keep the database on a local disk. Network drives and sync folders (OneDrive,
 Dropbox) break SQLite locking.
 
+## Durable workflows (v0.2)
+
+A workflow chains jobs into steps that survive crashes: activities (one job
+each), `parallel` fan-out/fan-in, durable `sleep_ms` timers, and
+`wait_signal` gates. Earlier results can be passed into later steps.
+
+```json
+{ "name": "research", "steps": [
+  { "name": "plan", "activity": { "kind": "mock", "payload": { "prompt": "plan" } } },
+  { "name": "research", "parallel": [
+      { "name": "a", "kind": "mock", "payload": { "prompt": "a" }, "inputs": ["plan"] },
+      { "name": "b", "kind": "mock", "payload": { "prompt": "b" }, "inputs": ["plan"] } ] },
+  { "name": "cooldown", "sleep_ms": 30000 },
+  { "name": "approval", "wait_signal": "approved" },
+  { "name": "final", "activity": { "kind": "mock", "payload": { "prompt": "write" },
+                                   "inputs": ["research.a", "research.b"] } } ] }
+```
+
+```powershell
+& $relay workflow start --file crates\relay-cli\workflows\research.json --wait
+& $relay workflow status <id>        # every step and branch, with attempts
+& $relay workflow signal <id> approved --payload '{\"by\":\"me\"}'
+& $relay workflow history <id>       # the durable event log
+& $relay demo-workflow               # two hard coordinator kills, 18 checks
+```
+
+**The guarantee.** Each run is an append-only event history in SQLite. A
+job's terminal transition and its workflow event commit in the *same
+transaction*, so there is no moment where an activity has finished but its
+workflow doesn't know. After a crash, nothing is replayed from memory: the
+coordinator folds the history and continues. An activity with a recorded
+completion is never executed again. An activity that was in flight when
+something crashed may run more than once (at-least-once, as for any job),
+but its result is recorded once. Timers keep their original deadline;
+signals are one-shot latches.
+
+Design, crash-window analysis and every decision:
+[`docs/WORKFLOWS_DESIGN.md`](docs/WORKFLOWS_DESIGN.md). API:
+[`docs/api.md`](docs/api.md#workflows).
+
 ## Live dashboard
 
 A browser view of a running cluster: per-state counts, the coordinator and
@@ -209,6 +249,7 @@ powershell -ExecutionPolicy Bypass -File scripts\bench.ps1   # reproduce the ben
 
 * [`ARCHITECTURE.md`](ARCHITECTURE.md): components, state machine, claim/lease/fencing design, sequence diagrams, risks
 * [`docs/api.md`](docs/api.md): HTTP contract
+* [`docs/WORKFLOWS_DESIGN.md`](docs/WORKFLOWS_DESIGN.md): durable workflows: model, transactions, replay, crash windows
 * [`dashboard/README.md`](dashboard/README.md): live dashboard setup and sync protocol
 * [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md): what is tested, how, and the latest results
 * [`bench/README.md`](bench/README.md): benchmark method and results
@@ -225,5 +266,6 @@ Unless you explicitly state otherwise, any contribution intentionally
 submitted for inclusion in this work by you, as defined in the Apache-2.0
 license, shall be dual licensed as above, without any additional terms or
 conditions.
-#   R e l a y L L M  
+#   R e l a y L L M 
+ 
  

@@ -11,3 +11,4 @@ pub mod job;
 pub mod retry;
 pub mod submission;
 pub mod worker;
+pub mod workflow;

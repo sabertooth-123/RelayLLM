@@ -13,6 +13,7 @@ use relay_core::events::EventKind;
 use relay_core::job::{AttemptOutcome, Job, JobId, JobState};
 
 use super::claims::finish_attempt;
+use super::workflows::{ActivityOutcome, on_activity_terminal};
 use super::{Store, StoreError, duration_ms, job_from_row, retry_at};
 
 /// `MAX(current, ...)`: a heartbeat never *shortens* a lease (the startup
@@ -115,6 +116,7 @@ impl Store {
 
         let mut reaped = Vec::with_capacity(rows.len());
         let mut events = Vec::with_capacity(rows.len());
+        let mut woke = false;
         for row in &rows {
             let job = job_from_row(row)?;
             let worker_id = job.worker_id.clone().unwrap_or_default();
@@ -158,6 +160,16 @@ impl Store {
                 Some(&reason),
             )
             .await?;
+            // Last attempt gone: the activity failed, in this transaction.
+            if !retry {
+                woke |= on_activity_terminal(
+                    &mut tx,
+                    self.clock.as_ref(),
+                    job.id,
+                    ActivityOutcome::Failed(reason.clone()),
+                )
+                .await?;
+            }
             // The row as the UPDATE above left it, for the event.
             let after = Job {
                 state: new_state,
@@ -185,6 +197,9 @@ impl Store {
             });
         }
         tx.commit().await?;
+        if woke {
+            self.nudge_decider();
+        }
         for event in events {
             self.events.publish(now, event);
         }

@@ -353,6 +353,104 @@ If the coordinator refuses a completion because of its content (`422`
 result too large, or `413` body too large), the Rust worker reports a
 **permanent** failure instead. Re-running would produce the same result.
 
+# Workflows
+
+Durable multi-step runs (v0.2). Design: `docs/WORKFLOWS_DESIGN.md`. Every
+activity is an ordinary job (visible under `/v1/jobs`), so claims, leases,
+retries and fencing apply unchanged.
+
+## `POST /v1/workflows`: start a run
+
+```json
+{ "definition": { "name": "research", "steps": [ ... ] },
+  "input": { "topic": "rust" },          // optional; the "input" address
+  "idempotency_key": "req-123" }          // optional; same rules as jobs
+```
+
+Step kinds (each step sets exactly one):
+
+| Field | Meaning |
+|---|---|
+| `activity: {kind, payload, inputs?, max_attempts?, timeout_secs?}` | One job. Address = step name. |
+| `parallel: [{name, kind, payload, inputs?, ...}, ...]` | 1–16 jobs scheduled together; the step is done when all succeed. Addresses = `step.branch`. If one fails, the in-flight others are cancelled and the run fails. |
+| `sleep_ms: N` | Durable timer, 1 ms – 7 days. The deadline is computed once and survives restarts. |
+| `wait_signal: "name"` | Wait until signal `name` is delivered (one-shot latch; may arrive early). |
+
+`inputs` lists earlier activity addresses (or `"input"`). Their results are
+added to the job's payload as `"inputs": {address: result}`. That is bounded
+by the 64 KiB payload limit: exceeding it fails the run with a clear
+reason. Limits: ≤ 64 steps, names `[A-Za-z0-9_-]{1,64}`, definition ≤ 64 KiB,
+unknown fields rejected.
+
+`201 {"created": true, "workflow": <view>}`, or `200` with `created: false`
+when the key matched a run started with the same request. Errors: `422
+invalid_request` (definition), `422 bad_body`, `409 idempotency_conflict`.
+
+## `GET /v1/workflows/{id}`: run and step view
+
+```json
+{ "id": "...", "name": "research", "state": "running",
+  "reason": null, "created_at_ms": 0, "updated_at_ms": 0, "finished_at_ms": null,
+  "wake_at_ms": null,
+  "steps": [
+    { "name": "plan", "kind": "activity", "status": "done",
+      "activities": [{ "address": "plan", "kind": "mock", "status": "succeeded",
+                       "job_id": "...", "attempt": 1, "max_attempts": 3 }] },
+    { "name": "research", "kind": "parallel", "status": "active", "activities": [ ... ] },
+    { "name": "cooldown", "kind": "sleep", "status": "pending" },
+    { "name": "approval", "kind": "wait_signal", "status": "pending",
+      "signal": "approved", "signal_received": false } ] }
+```
+
+* `state`: `running`, `succeeded`, `failed` or `cancelled`. `reason` explains
+  the last two.
+* Step `status`: `pending`, `active`, `done`, `failed` or `cancelled`.
+* Activity `status`: `pending` (no job yet), `queued`, `running`, `retrying`,
+  `succeeded`, `failed` or `cancelled`.
+* `fire_at_ms` appears on an armed `sleep`.
+
+Errors: `400 invalid_workflow_id`, `404 workflow_not_found`.
+
+## `GET /v1/workflows/{id}/history`
+
+`{"id", "events": [{"seq", "at_ms", "type", ...}]}`, the append-only event
+log in `seq` order: `workflow_started`, `activity_scheduled`,
+`activity_completed`, `activity_failed`, `activity_cancelled`,
+`timer_scheduled`, `timer_fired`, `signal_received`, `workflow_completed`,
+`workflow_failed`, `workflow_cancelled`. Per-attempt detail lives on each
+activity's job (`/v1/jobs/{job_id}/attempts`).
+
+## `POST /v1/workflows/{id}/signals/{name}`
+
+Optional body `{"payload": <any JSON>}` (empty body = `null`). Returns `200
+{"recorded": true}` on first delivery, or `{"recorded": false}` when the same
+payload was already delivered (a safe retry).
+
+| Error | When |
+|---|---|
+| `404 workflow_not_found` | no such run |
+| `422 unknown_signal` | no `wait_signal` step awaits this name |
+| `409 signal_conflict` | already delivered with a *different* payload |
+| `409 workflow_finished` | the run ended without this signal |
+| `413 signal_too_large` | payload over 64 KiB |
+
+## `POST /v1/workflows/{id}/cancel`
+
+Optional body `{"reason": "..."}`. Cancels every outstanding activity job
+(its worker gets `409` and aborts) and ends the run, in one transaction.
+Returns `200` with the view. Idempotent on a cancelled run; `409
+workflow_finished` on a succeeded or failed one.
+
+## Metrics
+
+All read from the database (exact, survive restarts):
+
+| Metric | |
+|---|---|
+| `relay_workflow_runs{state}` | gauge, runs by state |
+| `relay_workflow_activity_attempts_total{outcome}` | finished attempts of workflow jobs; `retryable_error` + `lease_expired` are activity retries |
+| `relay_workflow_due_runs` | gauge, runs due for a decision now; growth means the decider is behind |
+
 # Job kinds shipped with the worker
 
 * `mock`: deterministic stand-in for an LLM; see `crates/relay-worker/src/mock.rs`.

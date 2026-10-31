@@ -8,8 +8,12 @@
 //! { "messages": [{"role": "user", "content": "text"}],
 //!   "system": "optional system prompt",
 //!   "model": "optional per-job override",
-//!   "max_tokens": 256, "temperature": 0.2 }
+//!   "max_tokens": 256, "temperature": 0.2,
+//!   "inputs": { "plan": {...} } }   // optional; filled by a workflow
 //! ```
+//!
+//! `inputs` (earlier workflow results) are appended to the last user message
+//! as a "Context from earlier steps" block, one `### address` section each.
 //!
 //! Failure classification decides retries. Retrying can fix a timeout, a
 //! rate limit or an overloaded server, but never a bad request or a missing
@@ -30,7 +34,7 @@ use std::fmt;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::handler::{BoxFuture, HandlerError, JobContext, JobHandler};
 
@@ -122,6 +126,9 @@ struct ChatPayload {
     max_tokens: Option<u32>,
     #[serde(default)]
     temperature: Option<f32>,
+    /// Filled by a workflow: earlier activity results by address.
+    #[serde(default)]
+    inputs: Option<Map<String, Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,8 +179,34 @@ impl ChatPayload {
                 },
             );
         }
+        if let Some(inputs) = self.inputs.take().filter(|i| !i.is_empty()) {
+            let target = messages
+                .iter_mut()
+                .rev()
+                .find(|m| m.role == "user")
+                .ok_or_else(|| {
+                    HandlerError::permanent("inputs need a user message to attach to")
+                })?;
+            target.content.push_str(&context_block(&inputs));
+        }
         Ok(messages)
     }
+}
+
+/// Earlier workflow results as a plain-text block after the prompt. A result
+/// with a `completion` string (what `chat` and `mock` return) contributes
+/// that text; anything else contributes its compact JSON. Keys are sorted
+/// (serde_json's `Map` is ordered), so the prompt is deterministic.
+fn context_block(inputs: &Map<String, Value>) -> String {
+    let mut block = String::from("\n\nContext from earlier steps:");
+    for (address, value) in inputs {
+        let text = value
+            .get("completion")
+            .and_then(Value::as_str)
+            .map_or_else(|| value.to_string(), str::to_owned);
+        block.push_str(&format!("\n\n### {address}\n{text}"));
+    }
+    block
 }
 
 fn retryable_status(status: reqwest::StatusCode) -> bool {
