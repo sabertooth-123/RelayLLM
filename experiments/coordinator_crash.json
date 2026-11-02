@@ -1,0 +1,25 @@
+{
+  "name": "coordinator_crash",
+  "description": "E. SIGKILL the coordinator once at a controlled point, down for 1 s, then restart on the same database. Workflow: 4-branch fan-out (uniform 500-3000 ms, so branches finish at different times), a 3 s sleep, a join. Workers keep running throughout.",
+  "seed": 20261104,
+  "repetitions": 3,
+  "timeout_secs": 240,
+  "cluster": { "workers": 4, "concurrency": 2, "lease_secs": 5, "retry_base_ms": 200, "retry_max_ms": 2000,
+               "max_active_jobs": 10000, "sqlite_synchronous": "full" },
+  "workload": { "workflows": 4, "submit_interval_ms": 0,
+                "shape": { "width": 4, "sleep_ms": 3000, "join": true },
+                "duration": { "distribution": "uniform", "min_ms": 500, "max_ms": 3000 },
+                "max_attempts": 3 },
+  "failures": { "coordinator_crash": { "points": ["activities_running"], "downtime_ms": 1000, "observe_timeout_secs": 30 } },
+  "variants": [
+    { "label": "baseline-no-crash", "set": { "failures": { "coordinator_crash": null } } },
+    { "label": "activities-running",      "set": { "failures": { "coordinator_crash": { "points": ["activities_running"] } } } },
+    { "label": "branches-partially-done", "set": { "failures": { "coordinator_crash": { "points": ["branches_partially_done"] } } } },
+    { "label": "timer-pending",           "set": { "failures": { "coordinator_crash": { "points": ["timer_pending"] } } } },
+    { "label": "decision-pending",        "set": { "failures": { "coordinator_crash": { "points": ["decision_pending"] } } } }
+  ],
+  "profiles": {
+    "fast": { "repetitions": 1 },
+    "full": { "repetitions": 5, "workload": { "workflows": 8 } }
+  }
+}

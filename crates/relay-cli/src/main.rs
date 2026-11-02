@@ -6,6 +6,7 @@ mod cluster;
 mod coordinator;
 mod demo;
 mod demo_workflow;
+mod experiment;
 mod runtime;
 mod worker_cmd;
 mod workflow_cmds;
@@ -56,6 +57,9 @@ enum Command {
     DemoWorkflow(demo_workflow::DemoWorkflowArgs),
     /// Benchmark throughput, latency and recovery on local clusters.
     Bench(bench::BenchArgs),
+    /// Seeded, reproducible experiments with failure injection (docs/EXPERIMENTS.md).
+    #[command(subcommand)]
+    Experiment(experiment::ExperimentCommand),
     /// Show every attempt of a job: which worker ran it and how it ended.
     Attempts(client_cmds::StatusArgs),
     /// Submit a job.
@@ -81,6 +85,7 @@ async fn main() -> ExitCode {
         Command::Demo(args) => demo::run(args).await,
         Command::DemoWorkflow(args) => demo_workflow::run(args).await,
         Command::Bench(args) => bench::run(args).await,
+        Command::Experiment(command) => experiment::run(command).await,
         Command::Attempts(args) => client_cmds::attempts(&cli.server, cli.json, args).await,
         Command::Submit(args) => client_cmds::submit(&cli.server, cli.json, args).await,
         Command::Status(args) => client_cmds::status(&cli.server, cli.json, args).await,

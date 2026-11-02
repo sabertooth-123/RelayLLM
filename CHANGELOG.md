@@ -37,6 +37,12 @@ Durable multi-step LLM workflows on top of the v0.1 job queue
 - **Metrics**: `relay_workflow_runs{state}`,
   `relay_workflow_activity_attempts_total{outcome}`, `relay_workflow_due_runs`.
 - `mock` and `chat` handlers accept `inputs`.
+- **Experiment harness** (`relay experiment run|plan`, `experiments/*.json`,
+  `scripts/analyze_experiments.py`, `docs/EXPERIMENTS.md`): seeded plans
+  (durations, crash targets, crash offsets), real worker and coordinator
+  SIGKILLs with requested/executed records, raw CSVs, pooled nearest-rank
+  summaries and per-run history invariants. Measurement only: no scheduler,
+  lease or store behaviour changed.
 
 ### Fixed during development
 - A full queue no longer livelocks a fan-out wider than the free capacity:

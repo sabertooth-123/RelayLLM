@@ -10,3 +10,4 @@
 # Dashboard (Vite)
 /dashboard/node_modules/
 /dashboard/dist/
+/experiments/results/

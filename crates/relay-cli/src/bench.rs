@@ -146,7 +146,7 @@ struct RecoveryTrial {
     complete_ms: i64,
 }
 
-fn unix_ms() -> i64 {
+pub(crate) fn unix_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
@@ -164,7 +164,7 @@ fn percentile(values: &[i64], p: f64) -> i64 {
     sorted[rank.clamp(1, sorted.len()) - 1]
 }
 
-fn cpu_model() -> Option<String> {
+pub(crate) fn cpu_model() -> Option<String> {
     if cfg!(windows) {
         std::env::var("PROCESSOR_IDENTIFIER").ok()
     } else {

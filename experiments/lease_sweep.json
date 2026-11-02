@@ -1,0 +1,26 @@
+{
+  "name": "lease_sweep",
+  "description": "A. Lease duration vs. recovery from worker SIGKILLs. Each targeted activity's worker is killed halfway through attempt 1; the lease decides how long the coordinator takes to notice. Same seed => same targets and kill offsets in every variant.",
+  "seed": 20261031,
+  "repetitions": 3,
+  "timeout_secs": 300,
+  "cluster": { "workers": 8, "concurrency": 1, "lease_secs": 5, "retry_base_ms": 200, "retry_max_ms": 2000,
+               "max_active_jobs": 10000, "sqlite_synchronous": "full" },
+  "workload": { "workflows": 12, "submit_interval_ms": 0,
+                "shape": { "width": 4, "join": false },
+                "duration": { "distribution": "fixed", "ms": 3000 },
+                "max_attempts": 4 },
+  "failures": { "worker_crash": { "probability": 0.25, "crash_point": 0.5, "restart_worker": true } },
+  "variants": [
+    { "label": "baseline-lease-5s", "set": { "failures": { "worker_crash": null } } },
+    { "label": "lease-1s",  "set": { "cluster": { "lease_secs": 1 } } },
+    { "label": "lease-2s",  "set": { "cluster": { "lease_secs": 2 } } },
+    { "label": "lease-5s",  "set": { "cluster": { "lease_secs": 5 } } },
+    { "label": "lease-10s", "set": { "cluster": { "lease_secs": 10 } } },
+    { "label": "lease-30s", "set": { "cluster": { "lease_secs": 30 } } }
+  ],
+  "profiles": {
+    "fast": { "repetitions": 1, "workload": { "workflows": 4 } },
+    "full": { "repetitions": 5, "workload": { "workflows": 24 }, "timeout_secs": 600 }
+  }
+}

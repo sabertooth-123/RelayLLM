@@ -1,0 +1,24 @@
+{
+  "name": "failure_rate",
+  "description": "B. Fraction of activities whose first attempt loses its worker (SIGKILL at 50% of the attempt). Lease 2 s. Crash targets are nested: every target at 5% is also a target at 10% and 25%.",
+  "seed": 20261101,
+  "repetitions": 3,
+  "timeout_secs": 300,
+  "cluster": { "workers": 8, "concurrency": 1, "lease_secs": 2, "retry_base_ms": 200, "retry_max_ms": 2000,
+               "max_active_jobs": 10000, "sqlite_synchronous": "full" },
+  "workload": { "workflows": 20, "submit_interval_ms": 0,
+                "shape": { "width": 4, "join": true },
+                "duration": { "distribution": "fixed", "ms": 1000 },
+                "max_attempts": 3 },
+  "failures": { "worker_crash": { "probability": 0.0, "crash_point": 0.5, "restart_worker": true } },
+  "variants": [
+    { "label": "baseline-0pct", "set": { "failures": { "worker_crash": null } } },
+    { "label": "fail-5pct",  "set": { "failures": { "worker_crash": { "probability": 0.05 } } } },
+    { "label": "fail-10pct", "set": { "failures": { "worker_crash": { "probability": 0.10 } } } },
+    { "label": "fail-25pct", "set": { "failures": { "worker_crash": { "probability": 0.25 } } } }
+  ],
+  "profiles": {
+    "fast": { "repetitions": 1, "workload": { "workflows": 8 } },
+    "full": { "repetitions": 5, "workload": { "workflows": 40 }, "timeout_secs": 600 }
+  }
+}

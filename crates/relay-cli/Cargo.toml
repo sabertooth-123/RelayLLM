@@ -22,6 +22,7 @@ relay-client.workspace = true
 relay-worker.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+fastrand.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

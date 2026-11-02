@@ -235,6 +235,16 @@ The short version, on one Windows laptop running everything:
   up to 9.8×, because colliding writers had been sleep-polling inside
   SQLite's busy handler.
 
+### Experiments (v0.2 baseline)
+
+`relay experiment run experiments/<name>.json --profile fast|full` runs
+seeded, reproducible experiments on local clusters with real process kills:
+lease sweep, failure rate, fan-out width, duration distributions and
+coordinator crashes at controlled points. It writes raw CSVs, pooled
+summaries and invariant checks, and `scripts/analyze_experiments.py` plots
+them. Method, metric definitions and what the results do *not* show:
+[`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md).
+
 ## Development
 
 ```powershell
@@ -253,6 +263,7 @@ powershell -ExecutionPolicy Bypass -File scripts\bench.ps1   # reproduce the ben
 * [`dashboard/README.md`](dashboard/README.md): live dashboard setup and sync protocol
 * [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md): what is tested, how, and the latest results
 * [`bench/README.md`](bench/README.md): benchmark method and results
+* [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md): the experiment harness, metric definitions and limits
 * [`docs/decisions/`](docs/decisions): architecture decision records
 * [`docs/reviews/`](docs/reviews): correctness review
 * [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md), [`CHANGELOG.md`](CHANGELOG.md), [`ROADMAP.md`](ROADMAP.md)

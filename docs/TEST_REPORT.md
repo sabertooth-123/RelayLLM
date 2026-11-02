@@ -5,13 +5,14 @@
 | | |
 |---|---|
 | Command | `cargo test --workspace` (debug build) |
-| Result | **248 passed, 0 failed**, 1 ignored (an `ignore`-marked doc example in `handler.rs`). v0.1 + dashboard: 138; v0.2 workflows: 110 |
+| Result | **279 passed, 0 failed**, 1 ignored (an `ignore`-marked doc example in `handler.rs`). v0.1 + dashboard: 138; v0.2 workflows: 110; experiment harness: 31 |
 | Wall time | 96 s (already compiled; includes both process-level demos) |
 | Lint | `cargo fmt --all --check` clean · `cargo clippy --workspace --all-targets -- -D warnings` clean |
 | Dashboard | `npm test`: 13 reducer tests pass (vitest) · `npm run build`: `tsc --noEmit` clean, bundle builds · `npm audit`: 0 vulnerabilities |
 | Dashboard, end to end | Real coordinator (`--dev-controls`, 6 s lease) + 3 real workers, driven in a browser: empty and unreachable states; 8 jobs submitted from the UI, each failing attempt 1 and succeeding on attempt 2 (UI counts and `seq` equal a fresh snapshot: 0 duplicates, 0 stale, 0 resyncs); dev lease expiry (2 jobs → retrying, worker shown idle); a worker process killed (shown *unavailable* after one lease, *disconnected* after three); page reload (state rebuilt from the snapshot); coordinator stopped (banner, every worker *unknown*) and restarted (new epoch, one resync, durable counts restored); 375 px width without horizontal scroll |
 | Environment | Windows 11 Home 10.0.26200, Intel64 Family 6 Model 183 (20 logical CPUs), rustc/cargo 1.99.1 |
 | Workflow demo | `relay demo-workflow`: 18/18 checks, 17.4 s. Research workflow (plan → 3 parallel branches → aggregate → 8 s timer → final) through **two hard coordinator kills**: mid fan-out and during the timer. Completed activities ran once, the in-flight branch recovered, the retrying branch kept its retry, the timer kept its deadline and fired once, every activity was scheduled exactly once |
+| Experiments | `relay experiment run --profile fast` for all five families (A–E, release build): 23 variant runs, every workflow succeeded, 32/32 planned worker kills and 4/4 coordinator kills executed, **0 invariant violations**. `--profile full` (2026-11-02, 47 min): 115 runs, 2,820/2,820 workflows succeeded, 957/957 worker and 20/20 coordinator kills executed, **0 invariant violations**, 0 timeouts. See `docs/EXPERIMENTS.md` |
 | Also run | `scripts/demo.ps1` (16/16 demo checks, then the suite: all pass) and `scripts/demo-compose.ps1` (15/15 checks against Docker Compose). Both under **Windows PowerShell 5.1** |
 
 Not run: CI on GitHub Actions (no remote yet) and Linux. The workflow
@@ -50,6 +51,8 @@ in `.github/workflows/ci.yml` runs the same commands on Ubuntu and Windows.
 | `relay-worker/tests/openai.rs` (+1) | 8 | … plus `inputs` as a context block |
 | `relay-cli/tests/workflow_cli.rs` | 2 | every `relay workflow` subcommand against a real coordinator; bad definition file |
 | `relay-cli/tests/demo_workflow.rs` | 1 | the full `relay demo-workflow` (two coordinator kills, all checks) |
+| `relay-cli` unit, experiment harness | 26 | config merge patches, profiles/variants, every validation error; seeded plans (determinism, common random numbers, nested crash targets, distribution shapes, valid definitions); nearest-rank percentiles, sample sd, pooled vs averaged p99; recovery metrics, upper-bound waste, invariant checks catching injected bad histories; CSV quoting and column order; crash-point conditions |
+| `relay-cli/tests/experiment.rs` | 5 | `relay experiment run` on real processes: clean run (all tables, metadata, stored plan = `plan` output); real worker SIGKILL with detection/recovery metrics; coordinator SIGKILL + restart with no re-execution; timeout fails the run and leaves no live process; an unobservable crash point recorded as `not_observed` |
 
 ## v0.2: the 15 required workflow tests
 

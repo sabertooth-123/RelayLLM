@@ -1,0 +1,22 @@
+{
+  "name": "durations",
+  "description": "D. Activity duration distribution at equal mean (~1000 ms), no failures. Width-8 fan-out, 16 slots. lognormal: median 726 ms, sigma 0.8 (mean = 726*exp(0.32) = 1000 ms; p99/median = exp(0.8*2.326) = 6.4), clamped to 20 s.",
+  "seed": 20261103,
+  "repetitions": 3,
+  "timeout_secs": 300,
+  "cluster": { "workers": 4, "concurrency": 4, "lease_secs": 5, "retry_base_ms": 200, "retry_max_ms": 2000,
+               "max_active_jobs": 10000, "sqlite_synchronous": "full" },
+  "workload": { "workflows": 20, "submit_interval_ms": 0,
+                "shape": { "width": 8, "join": false },
+                "duration": { "distribution": "fixed", "ms": 1000 },
+                "max_attempts": 3 },
+  "variants": [
+    { "label": "baseline-fixed", "set": {} },
+    { "label": "uniform",   "set": { "workload": { "duration": { "distribution": "uniform", "ms": null, "min_ms": 200, "max_ms": 1800 } } } },
+    { "label": "lognormal", "set": { "workload": { "duration": { "distribution": "lognormal", "ms": null, "median_ms": 726, "sigma": 0.8, "max_ms": 20000 } } } }
+  ],
+  "profiles": {
+    "fast": { "repetitions": 1, "workload": { "workflows": 8 } },
+    "full": { "repetitions": 5, "workload": { "workflows": 40 } }
+  }
+}

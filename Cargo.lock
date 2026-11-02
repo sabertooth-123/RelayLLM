@@ -1220,6 +1220,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "fastrand",
  "relay-client",
  "relay-core",
  "relay-server",

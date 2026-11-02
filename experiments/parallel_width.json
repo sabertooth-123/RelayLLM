@@ -1,0 +1,24 @@
+{
+  "name": "parallel_width",
+  "description": "C. Fan-out width (branches per parallel step) with a join, no failures. 16 slots (4 workers x 4). Width 32 is not run: WorkflowLimits caps a parallel step at 16 branches and this harness does not change limits.",
+  "seed": 20261102,
+  "repetitions": 3,
+  "timeout_secs": 300,
+  "cluster": { "workers": 4, "concurrency": 4, "lease_secs": 5, "retry_base_ms": 200, "retry_max_ms": 2000,
+               "max_active_jobs": 10000, "sqlite_synchronous": "full" },
+  "workload": { "workflows": 10, "submit_interval_ms": 0,
+                "shape": { "width": 1, "join": true },
+                "duration": { "distribution": "fixed", "ms": 500 },
+                "max_attempts": 3 },
+  "variants": [
+    { "label": "baseline-width-1", "set": {} },
+    { "label": "width-2",  "set": { "workload": { "shape": { "width": 2 } } } },
+    { "label": "width-4",  "set": { "workload": { "shape": { "width": 4 } } } },
+    { "label": "width-8",  "set": { "workload": { "shape": { "width": 8 } } } },
+    { "label": "width-16", "set": { "workload": { "shape": { "width": 16 } } } }
+  ],
+  "profiles": {
+    "fast": { "repetitions": 1, "workload": { "workflows": 5 } },
+    "full": { "repetitions": 5, "workload": { "workflows": 20 } }
+  }
+}
