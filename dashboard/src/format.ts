@@ -1,4 +1,4 @@
-import type { JobState } from "./types";
+import type { DashboardEvent, JobState } from "./types";
 
 export const STATE_LABEL: Record<JobState, string> = {
   queued: "Queued",
@@ -7,6 +7,18 @@ export const STATE_LABEL: Record<JobState, string> = {
   succeeded: "Succeeded",
   failed: "Failed",
   cancelled: "Cancelled",
+};
+
+export const EVENT_LABEL: Record<DashboardEvent["type"], string> = {
+  job_submitted: "submitted",
+  job_claimed: "claimed",
+  job_succeeded: "succeeded",
+  job_retry_scheduled: "retry scheduled",
+  job_failed: "failed",
+  job_cancelled: "cancelled",
+  lease_expired: "lease expired",
+  worker_registered: "worker registered",
+  worker_heartbeat: "heartbeat",
 };
 
 /** "3.2 s", "4 min", ... for a duration in ms. Whole seconds drop the ".0". */

@@ -40,6 +40,7 @@ export function SummaryCards({
       <div className="capacity" title="queued + running + retrying, against --max-active-jobs">
         <div className="capacity-head">
           <span>Capacity</span>
+          <span>{model.counts.cancelled ? `${approx}${model.counts.cancelled.toLocaleString()} cancelled` : ""}</span>
         </div>
         <div className="capacity-value">
           {approx}

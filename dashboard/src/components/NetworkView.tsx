@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
-import { ago, duration, since } from "../format";
+import { ago, duration, EVENT_LABEL, since } from "../format";
 import { short, workerHealth, type ActivityKind, type Model } from "../state";
 import type { DashboardEvent, JobSummary } from "../types";
 
@@ -192,7 +192,14 @@ export function NetworkView(props: Props) {
             <div className="ticks" aria-hidden>
               {model.events.slice(-40).map((e) => {
                 const t = tick(e);
-                return <span key={`${e.epoch}:${e.seq}`} className={t.cls} style={{ height: t.height }} />;
+                return (
+                  <span
+                    key={`${e.epoch}:${e.seq}`}
+                    className={t.cls}
+                    style={{ height: t.height }}
+                    title={`#${e.seq} ${EVENT_LABEL[e.type]}`}
+                  />
+                );
               })}
             </div>
             <div className="tiny">committed transitions → seq {model.seq.toLocaleString()}</div>

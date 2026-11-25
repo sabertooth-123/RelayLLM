@@ -1,20 +1,8 @@
 import { useState } from "react";
 
-import { clock, workerLabel } from "../format";
+import { clock, EVENT_LABEL, workerLabel } from "../format";
 import { short } from "../state";
 import type { DashboardEvent, WorkerView } from "../types";
-
-const LABEL: Record<DashboardEvent["type"], string> = {
-  job_submitted: "submitted",
-  job_claimed: "claimed",
-  job_succeeded: "succeeded",
-  job_retry_scheduled: "retry scheduled",
-  job_failed: "failed",
-  job_cancelled: "cancelled",
-  lease_expired: "lease expired",
-  worker_registered: "worker registered",
-  worker_heartbeat: "heartbeat",
-};
 
 interface Props {
   events: DashboardEvent[];
@@ -82,7 +70,7 @@ export function EventTimeline({ events, workers, height, stats, onSelectJob, onS
               <span className="ev-time">{clock(e.at_ms)}</span>
               <span className="ev-sq" />
               <span className="ev-text" title={describe(e)}>
-                <b>{LABEL[e.type]}</b> <span>{describe(e)}</span>
+                <b>{EVENT_LABEL[e.type]}</b> <span>{describe(e)}</span>
               </span>
             </div>
           ))
